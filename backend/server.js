@@ -10,7 +10,13 @@ const createGameConfig = require("./game/config");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const allowedOrigin = process.env.CLIENT_URL || "*";
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigin,
+    methods: ["GET", "POST"],
+  },
+});
 
 const PORT = process.env.PORT || 3000;
 const rooms = {};
