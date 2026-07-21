@@ -5,6 +5,7 @@ import Waiting from "./screens/Waiting";
 import Game from "./screens/Game";
 
 const SESSION_KEY = "kaari3-session";
+const ACTIVE_SESSION_KEY = "kaari3-active-session";
 
 function loadSession() {
   try {
@@ -23,17 +24,42 @@ function clearSession() {
   localStorage.removeItem(SESSION_KEY);
 }
 
+function hasActiveSessionMarker() {
+  try {
+    return sessionStorage.getItem(ACTIVE_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markSessionActive() {
+  try {
+    sessionStorage.setItem(ACTIVE_SESSION_KEY, "1");
+  } catch {
+    // Ignore storage errors and continue without auto-resume support.
+  }
+}
+
+function clearSessionActive() {
+  try {
+    sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+  } catch {
+    // Ignore storage errors and continue without auto-resume support.
+  }
+}
+
 export default function App() {
-  const [initialSession] = useState(() => loadSession());
+  const [savedSession, setSavedSession] = useState(() => loadSession());
+  const [shouldAutoReconnect] = useState(() => hasActiveSessionMarker());
   const [screen, setScreen] = useState("lobby");
-  const [myId, setMyId] = useState(initialSession?.playerId || null);
-  const [myName, setMyName] = useState(initialSession?.name || "");
-  const [roomCode, setRoomCode] = useState(initialSession?.roomCode || "");
+  const [myId, setMyId] = useState(savedSession?.playerId || null);
+  const [myName, setMyName] = useState(savedSession?.name || "");
+  const [roomCode, setRoomCode] = useState(savedSession?.roomCode || "");
   const [gameState, setGameState] = useState({});
   const [myHand, setMyHand] = useState([]);
 
   useEffect(() => {
-    if (initialSession) {
+    if (savedSession && shouldAutoReconnect) {
       socket.connect();
     }
 
@@ -51,6 +77,8 @@ export default function App() {
         name: myName,
       };
       saveSession(session);
+      setSavedSession(session);
+      markSessionActive();
       setMyId(playerId);
       setRoomCode(joinedRoomCode);
       setScreen("waiting");
@@ -59,9 +87,12 @@ export default function App() {
     const handleReconnected = ({ roomCode: joinedRoomCode, playerId }) => {
       const session = loadSession();
       if (session) {
-        saveSession({ ...session, roomCode: joinedRoomCode, playerId });
-        setMyName(session.name || "");
+        const nextSession = { ...session, roomCode: joinedRoomCode, playerId };
+        saveSession(nextSession);
+        setSavedSession(nextSession);
+        setMyName(nextSession.name || "");
       }
+      markSessionActive();
       setMyId(playerId);
       setRoomCode(joinedRoomCode);
     };
@@ -85,12 +116,14 @@ export default function App() {
 
     const handleReconnectFailed = () => {
       clearSession();
+      clearSessionActive();
+      setSavedSession(null);
       setScreen("lobby");
       setRoomCode("");
       setMyId(null);
+      setMyName("");
       setGameState({});
       setMyHand([]);
-      alert("Your previous room session could not be restored.");
     };
 
     socket.on("connect", handleConnect);
@@ -112,13 +145,28 @@ export default function App() {
       socket.off("game_error", handleError);
       socket.off("reconnect_failed", handleReconnectFailed);
     };
-  }, [initialSession, myName]);
+  }, [savedSession, myName, shouldAutoReconnect]);
+
+  function resumeSavedRoom() {
+    if (!savedSession?.roomCode || !savedSession?.playerId) return;
+    setMyId(savedSession.playerId);
+    setMyName(savedSession.name || "");
+    setRoomCode(savedSession.roomCode);
+    markSessionActive();
+    socket.connect();
+  }
 
   const effectiveName =
     gameState.players?.find(player => player.id === myId)?.name || myName;
 
   if (screen === "lobby") {
-    return <Lobby onNameChange={setMyName} />;
+    return (
+      <Lobby
+        onNameChange={setMyName}
+        savedSession={savedSession}
+        onResumeSavedRoom={resumeSavedRoom}
+      />
+    );
   }
 
   if (screen === "waiting") {

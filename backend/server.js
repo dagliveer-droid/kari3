@@ -7,6 +7,7 @@ const { dealCards } = require("./game/deck");
 const { canPlayCard, resolveTrick } = require("./game/trick");
 const { trickPoints } = require("./game/scoring");
 const createGameConfig = require("./game/config");
+const createRoomStore = require("./roomStore");
 
 const app = express();
 const server = http.createServer(app);
@@ -19,31 +20,137 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
+const DISCONNECT_GRACE_MS = 60_000;
 const rooms = {};
 const socketSessions = {};
-const DISCONNECT_GRACE_MS = 60_000;
+const roomStore = createRoomStore();
 
 app.use(express.static(path.join(__dirname, "../frontend/dist")));
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, persistentRooms: roomStore.enabled });
+});
 
 function generateId(prefix = "") {
   return `${prefix}${Math.random().toString(36).substring(2, 10)}`;
 }
 
-function generateRoomCode() {
-  let roomCode;
-  do {
-    roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
-  } while (rooms[roomCode]);
-  return roomCode;
+function createPauseReason(room, fallback = "Waiting for players to reconnect") {
+  const disconnectedPlayers = room.players.filter(id => room.disconnected.has(id));
+  if (disconnectedPlayers.length === 0) return null;
+  return `Waiting for ${disconnectedPlayers.map(id => room.names[id]).join(", ")} to reconnect`;
 }
 
-function sendError(socket, message) {
-  socket.emit("game_error", { message });
+function createRoomState(hostPlayerId, hostSocketId, hostName) {
+  return {
+    players: [hostPlayerId],
+    hostId: hostPlayerId,
+    names: { [hostPlayerId]: hostName || "Player 1" },
+    sockets: { [hostPlayerId]: hostSocketId },
+    hands: {},
+    phase: "waiting",
+    currentBidder: null,
+    highestBid: 0,
+    highestBidder: null,
+    trump: null,
+    partnerCardTracker: {},
+    trick: [],
+    leadSuit: null,
+    leaderIndex: 0,
+    scores: {},
+    teamScores: { bidTeam: 0, oppTeam: 0 },
+    bidTeam: [],
+    revealedPartners: [],
+    gameOver: false,
+    gameResult: null,
+    config: null,
+    passedPlayers: new Set(),
+    disconnected: new Set(),
+    disconnectTimers: {},
+    paused: false,
+    pauseReason: null,
+    viewingCountdown: 15,
+  };
 }
 
-function getSocketForPlayer(room, playerId) {
-  const socketId = room.sockets[playerId];
-  return socketId ? io.sockets.sockets.get(socketId) : null;
+function serializeRoom(room) {
+  return {
+    players: room.players,
+    hostId: room.hostId,
+    names: room.names,
+    hands: room.hands,
+    phase: room.phase,
+    currentBidder: room.currentBidder,
+    highestBid: room.highestBid,
+    highestBidder: room.highestBidder,
+    trump: room.trump,
+    partnerCardTracker: room.partnerCardTracker,
+    trick: room.trick,
+    leadSuit: room.leadSuit,
+    leaderIndex: room.leaderIndex,
+    scores: room.scores,
+    teamScores: room.teamScores,
+    bidTeam: room.bidTeam,
+    revealedPartners: room.revealedPartners,
+    gameOver: room.gameOver,
+    gameResult: room.gameResult,
+    config: room.config,
+    passedPlayers: Array.from(room.passedPlayers),
+    disconnected: Array.from(room.disconnected),
+    paused: room.paused,
+    pauseReason: room.pauseReason,
+    viewingCountdown: room.viewingCountdown,
+  };
+}
+
+function hydrateRoom(snapshot) {
+  const room = {
+    players: snapshot.players || [],
+    hostId: snapshot.hostId || snapshot.players?.[0] || null,
+    names: snapshot.names || {},
+    sockets: {},
+    hands: snapshot.hands || {},
+    phase: snapshot.phase || "waiting",
+    currentBidder: snapshot.currentBidder || null,
+    highestBid: snapshot.highestBid || 0,
+    highestBidder: snapshot.highestBidder || null,
+    trump: snapshot.trump || null,
+    partnerCardTracker: snapshot.partnerCardTracker || {},
+    trick: snapshot.trick || [],
+    leadSuit: snapshot.leadSuit || null,
+    leaderIndex: snapshot.leaderIndex || 0,
+    scores: snapshot.scores || {},
+    teamScores: snapshot.teamScores || { bidTeam: 0, oppTeam: 0 },
+    bidTeam: snapshot.bidTeam || [],
+    revealedPartners: snapshot.revealedPartners || [],
+    gameOver: Boolean(snapshot.gameOver),
+    gameResult: snapshot.gameResult || null,
+    config: snapshot.config || null,
+    passedPlayers: new Set(snapshot.passedPlayers || []),
+    disconnected: new Set(snapshot.disconnected || []),
+    disconnectTimers: {},
+    paused: Boolean(snapshot.paused),
+    pauseReason: snapshot.pauseReason || null,
+    viewingCountdown: snapshot.viewingCountdown ?? 15,
+  };
+
+  if (room.phase !== "waiting" && room.phase !== "gameover") {
+    room.disconnected = new Set(room.players);
+    room.paused = true;
+    room.pauseReason = "Server restarted. Waiting for players to reconnect.";
+  }
+
+  return room;
+}
+
+async function persistRoom(roomCode) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  await roomStore.set(roomCode, serializeRoom(room));
+}
+
+async function deleteRoom(roomCode) {
+  delete rooms[roomCode];
+  await roomStore.delete(roomCode);
 }
 
 function updatePauseState(room) {
@@ -53,20 +160,28 @@ function updatePauseState(room) {
     return;
   }
 
-  const disconnectedPlayers = room.players.filter(id => room.disconnected.has(id));
-  if (disconnectedPlayers.length === 0) {
+  if (room.disconnected.size === 0) {
     room.paused = false;
     room.pauseReason = null;
     return;
   }
 
   room.paused = true;
-  room.pauseReason = `Waiting for ${disconnectedPlayers.map(id => room.names[id]).join(", ")} to reconnect`;
+  room.pauseReason = createPauseReason(room);
 }
 
 function getCurrentTurn(room) {
   if (room.players.length === 0) return null;
   return room.players[(room.leaderIndex + room.trick.length) % room.players.length];
+}
+
+function sendError(socket, message) {
+  socket.emit("game_error", { message });
+}
+
+function getSocketForPlayer(room, playerId) {
+  const socketId = room.sockets[playerId];
+  return socketId ? io.sockets.sockets.get(socketId) : null;
 }
 
 function broadcastRoomState(roomCode) {
@@ -129,7 +244,7 @@ function buildGameOverResult(room, message, bidWon) {
   };
 }
 
-function endGame(room, roomCode, messageOverride = null, bidWonOverride = null) {
+async function endGame(room, roomCode, messageOverride = null, bidWonOverride = null) {
   room.phase = "gameover";
   room.gameOver = true;
   room.paused = false;
@@ -143,6 +258,7 @@ function endGame(room, roomCode, messageOverride = null, bidWonOverride = null) 
   );
 
   room.gameResult = buildGameOverResult(room, message, bidWon);
+  await persistRoom(roomCode);
   io.to(roomCode).emit("game_over", room.gameResult);
   broadcastRoomState(roomCode);
 }
@@ -158,73 +274,78 @@ function scheduleDisconnectExpiry(roomCode, playerId) {
   if (!room) return;
 
   clearDisconnectTimer(room, playerId);
-  room.disconnectTimers[playerId] = setTimeout(() => {
+  room.disconnectTimers[playerId] = setTimeout(async () => {
     const liveRoom = rooms[roomCode];
     if (!liveRoom || !liveRoom.disconnected.has(playerId) || liveRoom.gameOver) return;
-    endGame(liveRoom, roomCode, `${liveRoom.names[playerId]} did not reconnect in time. Game ended.`, false);
+    await endGame(liveRoom, roomCode, `${liveRoom.names[playerId]} did not reconnect in time. Game ended.`, false);
   }, DISCONNECT_GRACE_MS);
 }
 
-function createRoomState(hostPlayerId, hostSocketId, hostName) {
-  return {
-    players: [hostPlayerId],
-    hostId: hostPlayerId,
-    names: { [hostPlayerId]: hostName || "Player 1" },
-    sockets: { [hostPlayerId]: hostSocketId },
-    hands: {},
-    phase: "waiting",
-    currentBidder: null,
-    highestBid: 0,
-    highestBidder: null,
-    trump: null,
-    partnerCardTracker: {},
-    trick: [],
-    leadSuit: null,
-    leaderIndex: 0,
-    scores: {},
-    teamScores: { bidTeam: 0, oppTeam: 0 },
-    bidTeam: [],
-    revealedPartners: [],
-    gameOver: false,
-    gameResult: null,
-    config: null,
-    passedPlayers: new Set(),
-    disconnected: new Set(),
-    disconnectTimers: {},
-    paused: false,
-    pauseReason: null,
-    viewingCountdown: 15,
-  };
+function attachSession(socketId, roomCode, playerId) {
+  socketSessions[socketId] = { roomCode, playerId };
 }
 
-function startTrumpSelection(room, roomCode) {
-  room.phase = "trump";
-  broadcastRoomState(roomCode);
+function getSession(socketId) {
+  return socketSessions[socketId];
+}
 
-  const bidderSocket = getSocketForPlayer(room, room.highestBidder);
-  if (bidderSocket) {
-    bidderSocket.emit("select_trump");
+async function getRoom(roomCode) {
+  if (rooms[roomCode]) return rooms[roomCode];
+
+  const snapshot = await roomStore.get(roomCode);
+  if (!snapshot) return null;
+
+  const room = hydrateRoom(snapshot);
+  rooms[roomCode] = room;
+
+  if (room.phase !== "waiting" && room.phase !== "gameover" && room.disconnected.size > 0) {
+    room.players.forEach(playerId => {
+      if (room.disconnected.has(playerId)) {
+        scheduleDisconnectExpiry(roomCode, playerId);
+      }
+    });
   }
+
+  return room;
 }
 
-function advanceBidder(room, roomCode) {
-  const activePlayers = room.players.filter(id => !room.passedPlayers.has(id));
+async function roomCodeExists(roomCode) {
+  if (rooms[roomCode]) return true;
+  return roomStore.has(roomCode);
+}
 
-  if (activePlayers.length === 1) {
-    if (!room.highestBidder) {
-      room.highestBidder = room.players[0];
-      room.highestBid = room.config.minBid;
-    }
-    startTrumpSelection(room, roomCode);
+async function generateRoomCode() {
+  let roomCode;
+  do {
+    roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+  } while (await roomCodeExists(roomCode));
+  return roomCode;
+}
+
+async function removeWaitingPlayer(roomCode, playerId) {
+  const room = rooms[roomCode];
+  if (!room) return;
+
+  room.players = room.players.filter(id => id !== playerId);
+  delete room.names[playerId];
+  delete room.sockets[playerId];
+  delete room.hands[playerId];
+  delete room.scores[playerId];
+  room.passedPlayers.delete(playerId);
+  room.bidTeam = room.bidTeam.filter(id => id !== playerId);
+  room.revealedPartners = room.revealedPartners.filter(id => id !== playerId);
+  clearDisconnectTimer(room, playerId);
+
+  if (room.hostId === playerId) {
+    room.hostId = room.players[0] || null;
+  }
+
+  if (room.players.length === 0) {
+    await deleteRoom(roomCode);
     return;
   }
 
-  let idx = room.players.indexOf(room.currentBidder);
-  do {
-    idx = (idx + 1) % room.players.length;
-  } while (room.passedPlayers.has(room.players[idx]));
-
-  room.currentBidder = room.players[idx];
+  await persistRoom(roomCode);
   broadcastRoomState(roomCode);
 }
 
@@ -255,48 +376,48 @@ function validatePartnerCards(cards, room) {
   return null;
 }
 
-function attachSession(socketId, roomCode, playerId) {
-  socketSessions[socketId] = { roomCode, playerId };
-}
+async function startTrumpSelection(room, roomCode) {
+  room.phase = "trump";
+  await persistRoom(roomCode);
+  broadcastRoomState(roomCode);
 
-function getSession(socketId) {
-  return socketSessions[socketId];
-}
-
-function removeWaitingPlayer(roomCode, playerId) {
-  const room = rooms[roomCode];
-  if (!room) return;
-
-  room.players = room.players.filter(id => id !== playerId);
-  delete room.names[playerId];
-  delete room.sockets[playerId];
-  delete room.hands[playerId];
-  delete room.scores[playerId];
-  room.passedPlayers.delete(playerId);
-  room.bidTeam = room.bidTeam.filter(id => id !== playerId);
-  room.revealedPartners = room.revealedPartners.filter(id => id !== playerId);
-  clearDisconnectTimer(room, playerId);
-
-  if (room.hostId === playerId) {
-    room.hostId = room.players[0] || null;
+  const bidderSocket = getSocketForPlayer(room, room.highestBidder);
+  if (bidderSocket) {
+    bidderSocket.emit("select_trump");
   }
+}
 
-  if (room.players.length === 0) {
-    delete rooms[roomCode];
+async function advanceBidder(room, roomCode) {
+  const activePlayers = room.players.filter(id => !room.passedPlayers.has(id));
+
+  if (activePlayers.length === 1) {
+    if (!room.highestBidder) {
+      room.highestBidder = room.players[0];
+      room.highestBid = room.config.minBid;
+    }
+    await startTrumpSelection(room, roomCode);
     return;
   }
 
+  let idx = room.players.indexOf(room.currentBidder);
+  do {
+    idx = (idx + 1) % room.players.length;
+  } while (room.passedPlayers.has(room.players[idx]));
+
+  room.currentBidder = room.players[idx];
+  await persistRoom(roomCode);
   broadcastRoomState(roomCode);
 }
 
 io.on("connection", socket => {
   console.log("Connected:", socket.id);
 
-  socket.on("create_room", ({ name }) => {
-    const roomCode = generateRoomCode();
+  socket.on("create_room", async ({ name }) => {
+    const roomCode = await generateRoomCode();
     const playerId = generateId("p_");
 
     rooms[roomCode] = createRoomState(playerId, socket.id, name);
+    await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
 
     socket.join(roomCode);
@@ -304,8 +425,8 @@ io.on("connection", socket => {
     broadcastRoomState(roomCode);
   });
 
-  socket.on("join_room", ({ roomCode, name }) => {
-    const room = rooms[roomCode];
+  socket.on("join_room", async ({ roomCode, name }) => {
+    const room = await getRoom(roomCode);
     if (!room) return sendError(socket, "Room not found");
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
     if (room.players.length >= 11) return sendError(socket, "Room is full (max 11)");
@@ -315,14 +436,15 @@ io.on("connection", socket => {
     room.names[playerId] = name || `Player ${room.players.length}`;
     room.sockets[playerId] = socket.id;
 
+    await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
     socket.join(roomCode);
     socket.emit("joined_room", { roomCode, playerId });
     broadcastRoomState(roomCode);
   });
 
-  socket.on("reconnect_room", ({ roomCode, playerId, name }) => {
-    const room = rooms[roomCode];
+  socket.on("reconnect_room", async ({ roomCode, playerId, name }) => {
+    const room = await getRoom(roomCode);
     if (!room || !playerId || !room.players.includes(playerId)) {
       socket.emit("reconnect_failed");
       return;
@@ -334,6 +456,7 @@ io.on("connection", socket => {
     clearDisconnectTimer(room, playerId);
     updatePauseState(room);
 
+    await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
     socket.join(roomCode);
     socket.emit("reconnected_room", { roomCode, playerId });
@@ -341,8 +464,8 @@ io.on("connection", socket => {
     broadcastRoomState(roomCode);
   });
 
-  socket.on("start_game", ({ roomCode }) => {
-    const room = rooms[roomCode];
+  socket.on("start_game", async ({ roomCode }) => {
+    const room = await getRoom(roomCode);
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode) return;
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
@@ -378,11 +501,12 @@ io.on("connection", socket => {
     room.pauseReason = null;
     room.viewingCountdown = 15;
 
+    await persistRoom(roomCode);
     sendHands(room);
     broadcastRoomState(roomCode);
 
-    const countdownInterval = setInterval(() => {
-      const liveRoom = rooms[roomCode];
+    const countdownInterval = setInterval(async () => {
+      const liveRoom = rooms[roomCode] || await getRoom(roomCode);
       if (!liveRoom) {
         clearInterval(countdownInterval);
         return;
@@ -399,13 +523,14 @@ io.on("connection", socket => {
       if (liveRoom.viewingCountdown <= 0) {
         clearInterval(countdownInterval);
         liveRoom.phase = "bidding";
+        await persistRoom(roomCode);
         broadcastRoomState(roomCode);
       }
     }, 1000);
   });
 
-  socket.on("place_bid", ({ roomCode, bid }) => {
-    const room = rooms[roomCode];
+  socket.on("place_bid", async ({ roomCode, bid }) => {
+    const room = await getRoom(roomCode);
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -421,31 +546,33 @@ io.on("connection", socket => {
 
     room.highestBid = bid;
     room.highestBidder = session.playerId;
+    await persistRoom(roomCode);
     io.to(roomCode).emit("bid_placed", {
       player: session.playerId,
       name: room.names[session.playerId],
       bid,
     });
-    advanceBidder(room, roomCode);
+    await advanceBidder(room, roomCode);
   });
 
-  socket.on("pass_bid", ({ roomCode }) => {
-    const room = rooms[roomCode];
+  socket.on("pass_bid", async ({ roomCode }) => {
+    const room = await getRoom(roomCode);
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
     if (room.currentBidder !== session.playerId) return;
 
     room.passedPlayers.add(session.playerId);
+    await persistRoom(roomCode);
     io.to(roomCode).emit("bid_passed", {
       player: session.playerId,
       name: room.names[session.playerId],
     });
-    advanceBidder(room, roomCode);
+    await advanceBidder(room, roomCode);
   });
 
-  socket.on("choose_trump", ({ roomCode, trump }) => {
-    const room = rooms[roomCode];
+  socket.on("choose_trump", async ({ roomCode, trump }) => {
+    const room = await getRoom(roomCode);
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "trump") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -455,13 +582,14 @@ io.on("connection", socket => {
     if (!validTrump.includes(trump)) return sendError(socket, "Invalid trump choice");
 
     room.trump = trump === "NONE" ? null : trump;
+    room.phase = "partner";
+    room.partnerCardTracker = {};
+
+    await persistRoom(roomCode);
     io.to(roomCode).emit("trump_chosen", {
       trump: room.trump,
       name: room.names[session.playerId],
     });
-
-    room.phase = "partner";
-    room.partnerCardTracker = {};
     broadcastRoomState(roomCode);
 
     socket.emit("select_partners", {
@@ -470,8 +598,8 @@ io.on("connection", socket => {
     });
   });
 
-  socket.on("choose_partners", ({ roomCode, cards }) => {
-    const room = rooms[roomCode];
+  socket.on("choose_partners", async ({ roomCode, cards }) => {
+    const room = await getRoom(roomCode);
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "partner") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -493,6 +621,7 @@ io.on("connection", socket => {
     room.leadSuit = null;
     room.teamScores = { bidTeam: 0, oppTeam: 0 };
 
+    await persistRoom(roomCode);
     io.to(roomCode).emit("partners_set", {
       partnerCards: cards,
       bidderName: room.names[room.highestBidder],
@@ -501,8 +630,8 @@ io.on("connection", socket => {
     broadcastRoomState(roomCode);
   });
 
-  socket.on("play_card", ({ roomCode, card }) => {
-    const room = rooms[roomCode];
+  socket.on("play_card", async ({ roomCode, card }) => {
+    const room = await getRoom(roomCode);
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "playing") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -580,22 +709,23 @@ io.on("connection", socket => {
 
       const anyCardsLeft = Object.values(room.hands).some(playerHand => playerHand.length > 0);
       if (!anyCardsLeft) {
-        endGame(room, roomCode);
+        await endGame(room, roomCode);
         return;
       }
     }
 
+    await persistRoom(roomCode);
     broadcastRoomState(roomCode);
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     console.log("Disconnected:", socket.id);
     const session = getSession(socket.id);
     delete socketSessions[socket.id];
     if (!session) return;
 
     const { roomCode, playerId } = session;
-    const room = rooms[roomCode];
+    const room = await getRoom(roomCode);
     if (!room || !room.players.includes(playerId)) return;
 
     if (room.sockets[playerId] === socket.id) {
@@ -604,7 +734,7 @@ io.on("connection", socket => {
 
     if (room.phase === "waiting") {
       const playerName = room.names[playerId];
-      removeWaitingPlayer(roomCode, playerId);
+      await removeWaitingPlayer(roomCode, playerId);
       if (rooms[roomCode]) {
         io.to(roomCode).emit("player_left", { name: playerName, disconnected: false });
       }
@@ -613,12 +743,23 @@ io.on("connection", socket => {
 
     room.disconnected.add(playerId);
     updatePauseState(room);
+    await persistRoom(roomCode);
     io.to(roomCode).emit("player_left", { name: room.names[playerId], disconnected: true });
     broadcastRoomState(roomCode);
     scheduleDisconnectExpiry(roomCode, playerId);
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+async function boot() {
+  try {
+    await roomStore.init();
+    server.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server", error);
+    process.exit(1);
+  }
+}
+
+boot();

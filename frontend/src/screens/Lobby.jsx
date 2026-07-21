@@ -2,7 +2,7 @@ import { useState } from "react";
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Lobby({ onNameChange }) {
+export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -175,6 +175,37 @@ export default function Lobby({ onNameChange }) {
               Start with your name
             </div>
           </div>
+
+          {savedSession?.roomCode && savedSession?.playerId && (
+            <div
+              className="soft-panel"
+              style={{
+                borderRadius: "20px",
+                padding: "0.95rem 1rem",
+                background: "rgba(255,255,255,0.72)",
+                display: "grid",
+                gap: "0.55rem",
+              }}
+            >
+              <div style={{ color: "var(--muted)", fontSize: "0.78rem", fontWeight: 700 }}>
+                Previous room found
+              </div>
+              <div style={{ color: "var(--text)", fontSize: "0.92rem" }}>
+                {savedSession.name || "Player"} in room <strong>{savedSession.roomCode}</strong>
+              </div>
+              <button
+                className="soft-button"
+                style={{
+                  background: "rgba(255,255,255,0.9)",
+                  color: "var(--text)",
+                  borderColor: "rgba(117,96,84,0.14)",
+                }}
+                onClick={onResumeSavedRoom}
+              >
+                Resume Previous Room
+              </button>
+            </div>
+          )}
 
           <input
             style={input}
