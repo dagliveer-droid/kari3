@@ -1,19 +1,14 @@
 const createGameConfig = require("./game/config");
+const { dealCards } = require("./game/deck");
 
-console.log(createGameConfig(5));
-console.log(createGameConfig(7));
-console.log(createGameConfig(9));
-console.log(createGameConfig(11));
-const { createGameDeck } = require("./game/deck");
+console.log("Config 5 players:", createGameConfig(5));
+console.log("Config 7 players:", createGameConfig(7));
+console.log("Config 9 players:", createGameConfig(9));
+console.log("Config 11 players:", createGameConfig(11));
 
-// Test 1 deck
-const oneDeck = createGameDeck(1);
-console.log("1 deck cards:", oneDeck.length);
+const hands1 = dealCards(5, 1);
+console.log("1 deck hands count:", Object.keys(hands1).length);
 
-// Test 2 decks
-const twoDecks = createGameDeck(2);
-console.log("2 deck cards:", twoDecks.length);
+const hands2 = dealCards(9, 2);
+console.log("2 deck hands count:", Object.keys(hands2).length);
 
-// Check some special cards
-const kali3 = oneDeck.find(c => c.suit === "♠" && c.rank === "3");
-console.log("Kali 3:", kali3);

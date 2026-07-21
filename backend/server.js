@@ -21,6 +21,7 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const DISCONNECT_GRACE_MS = 60_000;
+const RESTART_DISCONNECT_GRACE_MS = 10 * 60_000;
 const rooms = {};
 const socketSessions = {};
 const roomStore = createRoomStore();
@@ -143,14 +144,22 @@ function hydrateRoom(snapshot) {
 }
 
 async function persistRoom(roomCode) {
-  const room = rooms[roomCode];
-  if (!room) return;
-  await roomStore.set(roomCode, serializeRoom(room));
+  try {
+    const room = rooms[roomCode];
+    if (!room) return;
+    await roomStore.set(roomCode, serializeRoom(room));
+  } catch (err) {
+    console.error(`Failed to persist room ${roomCode}:`, err);
+  }
 }
 
 async function deleteRoom(roomCode) {
-  delete rooms[roomCode];
-  await roomStore.delete(roomCode);
+  try {
+    delete rooms[roomCode];
+    await roomStore.delete(roomCode);
+  } catch (err) {
+    console.error(`Failed to delete room ${roomCode}:`, err);
+  }
 }
 
 function updatePauseState(room) {
@@ -168,6 +177,42 @@ function updatePauseState(room) {
 
   room.paused = true;
   room.pauseReason = createPauseReason(room);
+}
+
+function recalculateTeamScores(room) {
+  let bidTeam = 0;
+  let oppTeam = 0;
+
+  room.players.forEach(playerId => {
+    const pScore = room.scores[playerId] || 0;
+    if (room.bidTeam.includes(playerId)) {
+      bidTeam += pScore;
+    } else {
+      oppTeam += pScore;
+    }
+  });
+
+  room.teamScores = { bidTeam, oppTeam };
+}
+
+function revealUnplayedPartners(room) {
+  if (!room.partnerCardTracker || !room.hands) return;
+
+  Object.entries(room.partnerCardTracker).forEach(([card, tracker]) => {
+    if (tracker.revealed < tracker.needed) {
+      room.players.forEach(playerId => {
+        const hand = room.hands[playerId] || [];
+        if (hand.includes(card)) {
+          if (!room.revealedPartners.includes(playerId)) {
+            room.revealedPartners.push(playerId);
+          }
+          if (!room.bidTeam.includes(playerId)) {
+            room.bidTeam.push(playerId);
+          }
+        }
+      });
+    }
+  });
 }
 
 function getCurrentTurn(room) {
@@ -245,6 +290,9 @@ function buildGameOverResult(room, message, bidWon) {
 }
 
 async function endGame(room, roomCode, messageOverride = null, bidWonOverride = null) {
+  revealUnplayedPartners(room);
+  recalculateTeamScores(room);
+
   room.phase = "gameover";
   room.gameOver = true;
   room.paused = false;
@@ -269,16 +317,48 @@ function clearDisconnectTimer(room, playerId) {
   delete room.disconnectTimers[playerId];
 }
 
-function scheduleDisconnectExpiry(roomCode, playerId) {
+function scheduleDisconnectExpiry(roomCode, playerId, isServerRestart = false) {
   const room = rooms[roomCode];
   if (!room) return;
 
   clearDisconnectTimer(room, playerId);
+  const graceMs = isServerRestart ? RESTART_DISCONNECT_GRACE_MS : DISCONNECT_GRACE_MS;
   room.disconnectTimers[playerId] = setTimeout(async () => {
     const liveRoom = rooms[roomCode];
     if (!liveRoom || !liveRoom.disconnected.has(playerId) || liveRoom.gameOver) return;
     await endGame(liveRoom, roomCode, `${liveRoom.names[playerId]} did not reconnect in time. Game ended.`, false);
-  }, DISCONNECT_GRACE_MS);
+  }, graceMs);
+}
+
+function startViewingCountdown(room, roomCode) {
+  if (room.viewingTimer) {
+    clearInterval(room.viewingTimer);
+    room.viewingTimer = null;
+  }
+
+  room.viewingTimer = setInterval(async () => {
+    const liveRoom = rooms[roomCode] || await getRoom(roomCode);
+    if (!liveRoom) {
+      if (room.viewingTimer) clearInterval(room.viewingTimer);
+      return;
+    }
+    if (liveRoom.phase !== "viewing") {
+      if (liveRoom.viewingTimer) clearInterval(liveRoom.viewingTimer);
+      return;
+    }
+    if (liveRoom.paused) return;
+
+    liveRoom.viewingCountdown -= 1;
+    io.to(roomCode).emit("viewing_countdown", { seconds: liveRoom.viewingCountdown });
+
+    if (liveRoom.viewingCountdown <= 0) {
+      if (liveRoom.viewingTimer) clearInterval(liveRoom.viewingTimer);
+      liveRoom.viewingTimer = null;
+      liveRoom.phase = "bidding";
+      await persistRoom(roomCode);
+      broadcastRoomState(roomCode);
+    }
+  }, 1000);
 }
 
 function attachSession(socketId, roomCode, playerId) {
@@ -301,9 +381,13 @@ async function getRoom(roomCode) {
   if (room.phase !== "waiting" && room.phase !== "gameover" && room.disconnected.size > 0) {
     room.players.forEach(playerId => {
       if (room.disconnected.has(playerId)) {
-        scheduleDisconnectExpiry(roomCode, playerId);
+        scheduleDisconnectExpiry(roomCode, playerId, true);
       }
     });
+  }
+
+  if (room.phase === "viewing" && !room.viewingTimer) {
+    startViewingCountdown(room, roomCode);
   }
 
   return room;
@@ -390,9 +474,9 @@ async function startTrumpSelection(room, roomCode) {
 async function advanceBidder(room, roomCode) {
   const activePlayers = room.players.filter(id => !room.passedPlayers.has(id));
 
-  if (activePlayers.length === 1) {
+  if (activePlayers.length <= 1) {
     if (!room.highestBidder) {
-      room.highestBidder = room.players[0];
+      room.highestBidder = activePlayers[0] || room.players[0];
       room.highestBid = room.config.minBid;
     }
     await startTrumpSelection(room, roomCode);
@@ -408,6 +492,7 @@ async function advanceBidder(room, roomCode) {
   await persistRoom(roomCode);
   broadcastRoomState(roomCode);
 }
+
 
 io.on("connection", socket => {
   console.log("Connected:", socket.id);
@@ -505,28 +590,7 @@ io.on("connection", socket => {
     sendHands(room);
     broadcastRoomState(roomCode);
 
-    const countdownInterval = setInterval(async () => {
-      const liveRoom = rooms[roomCode] || await getRoom(roomCode);
-      if (!liveRoom) {
-        clearInterval(countdownInterval);
-        return;
-      }
-      if (liveRoom.phase !== "viewing") {
-        clearInterval(countdownInterval);
-        return;
-      }
-      if (liveRoom.paused) return;
-
-      liveRoom.viewingCountdown -= 1;
-      io.to(roomCode).emit("viewing_countdown", { seconds: liveRoom.viewingCountdown });
-
-      if (liveRoom.viewingCountdown <= 0) {
-        clearInterval(countdownInterval);
-        liveRoom.phase = "bidding";
-        await persistRoom(roomCode);
-        broadcastRoomState(roomCode);
-      }
-    }, 1000);
+    startViewingCountdown(room, roomCode);
   });
 
   socket.on("place_bid", async ({ roomCode, bid }) => {
@@ -660,12 +724,15 @@ io.on("connection", socket => {
     emitPrivateHand(room, playerId);
 
     const tracker = room.partnerCardTracker[card];
-    if (tracker && tracker.revealed < tracker.needed && !room.revealedPartners.includes(playerId)) {
+    if (tracker && tracker.revealed < tracker.needed) {
       tracker.revealed += 1;
-      room.revealedPartners.push(playerId);
+      if (!room.revealedPartners.includes(playerId)) {
+        room.revealedPartners.push(playerId);
+      }
       if (!room.bidTeam.includes(playerId)) {
         room.bidTeam.push(playerId);
       }
+      recalculateTeamScores(room);
 
       io.to(roomCode).emit("partner_revealed", {
         player: playerId,
@@ -690,8 +757,7 @@ io.on("connection", socket => {
       const points = trickPoints(room.trick);
 
       room.scores[winner.player] = (room.scores[winner.player] || 0) + points;
-      if (room.bidTeam.includes(winner.player)) room.teamScores.bidTeam += points;
-      else room.teamScores.oppTeam += points;
+      recalculateTeamScores(room);
 
       room.leaderIndex = winner.playerIndex;
 

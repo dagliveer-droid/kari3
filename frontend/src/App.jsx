@@ -153,7 +153,11 @@ export default function App() {
     setMyName(savedSession.name || "");
     setRoomCode(savedSession.roomCode);
     markSessionActive();
-    socket.connect();
+    if (socket.connected) {
+      socket.emit("reconnect_room", savedSession);
+    } else {
+      socket.connect();
+    }
   }
 
   const effectiveName =

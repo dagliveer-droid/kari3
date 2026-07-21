@@ -99,6 +99,8 @@ export default function Game({ roomCode, myId, myName, state, myHand }) {
     initAudio();
     if (selectedCard === card && selectedCardIdx === idx) {
       socket.emit("play_card", { roomCode, card });
+      setSelectedCard(null);
+      setSelectedCardIdx(null);
       return;
     }
     setSelectedCard(card);
