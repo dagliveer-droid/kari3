@@ -73,10 +73,6 @@ export default function App() {
   const [myHand, setMyHand] = useState([]);
 
   useEffect(() => {
-    if (savedSession && shouldAutoReconnect) {
-      socket.connect();
-    }
-
     const handleConnect = () => {
       const session = loadSession();
       if (session?.roomCode && session?.playerId) {
@@ -149,6 +145,14 @@ export default function App() {
     socket.on("game_error", handleError);
     socket.on("reconnect_failed", handleReconnectFailed);
 
+    if (savedSession && shouldAutoReconnect) {
+      if (socket.connected) {
+        handleConnect();
+      } else {
+        socket.connect();
+      }
+    }
+
     return () => {
       socket.off("connect", handleConnect);
       socket.off("room_created", handleJoined);
@@ -174,6 +178,23 @@ export default function App() {
     }
   }
 
+  function leaveRoom() {
+    socket.disconnect();
+    clearSession();
+    clearSessionActive();
+    setSavedSession(null);
+    setScreen("lobby");
+    setRoomCode("");
+    setMyId(null);
+    setMyName("");
+    setGameState({});
+    setMyHand([]);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", "/");
+    }
+    socket.connect();
+  }
+
   const effectiveName =
     gameState.players?.find(player => player.id === myId)?.name || myName;
 
@@ -195,6 +216,7 @@ export default function App() {
         players={gameState.players || []}
         myId={myId}
         hostId={gameState.hostId}
+        onLeaveRoom={leaveRoom}
       />
     );
   }
@@ -206,6 +228,7 @@ export default function App() {
       myName={effectiveName}
       state={gameState}
       myHand={myHand}
+      onLeaveRoom={leaveRoom}
     />
   );
 }

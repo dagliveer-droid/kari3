@@ -1,7 +1,7 @@
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Waiting({ roomCode, players, myId, hostId }) {
+export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom }) {
   const isHost = myId && hostId === myId;
 
   function startGame() {
@@ -49,6 +49,9 @@ export default function Waiting({ roomCode, players, myId, hostId }) {
               background: "rgba(255,255,255,0.62)",
               border: "1px solid rgba(117,96,84,0.12)",
               boxShadow: "0 16px 32px rgba(123,98,85,0.08)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center"
             }}
           >
             <div style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700 }}>
@@ -57,6 +60,30 @@ export default function Waiting({ roomCode, players, myId, hostId }) {
             <div style={{ marginTop: "0.4rem", fontFamily: '"Fraunces", serif', fontSize: "3rem", letterSpacing: "0.22em", color: "var(--accent)" }}>
               {roomCode}
             </div>
+            <button
+              className="soft-button"
+              style={{
+                marginTop: "0.8rem",
+                padding: "0.45rem 0.95rem",
+                fontSize: "0.78rem",
+                background: "rgba(255,255,255,0.88)",
+                border: "1px solid rgba(117,96,84,0.14)",
+                color: "var(--text)",
+                borderRadius: "999px",
+                cursor: "pointer",
+                fontWeight: 700
+              }}
+              onClick={() => {
+                const link = `${window.location.origin}/${roomCode}`;
+                navigator.clipboard.writeText(link).then(() => {
+                  alert("Invite link copied to clipboard!");
+                }).catch(() => {
+                  alert(`Invite link: ${link}`);
+                });
+              }}
+            >
+              🔗 Copy Invite Link
+            </button>
           </div>
 
           <div style={{ color: "var(--muted)", fontSize: "0.92rem" }}>
@@ -117,35 +144,50 @@ export default function Waiting({ roomCode, players, myId, hostId }) {
           ))}
         </div>
 
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          {isHost ? (
-            <button
-              className="soft-button"
-              onClick={startGame}
-              disabled={players.length < 5}
-              style={{
-                minWidth: "220px",
-                background: players.length < 5 ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)",
-                color: players.length < 5 ? "var(--muted)" : "white",
-                opacity: players.length < 5 ? 0.7 : 1,
-                cursor: players.length < 5 ? "not-allowed" : "pointer",
-              }}
-            >
-              Start Game
-            </button>
-          ) : (
-            <div
-              className="soft-panel"
-              style={{
-                borderRadius: "999px",
-                padding: "0.9rem 1.2rem",
-                background: "rgba(255,252,247,0.76)",
-                color: "var(--muted)",
-              }}
-            >
-              Waiting for the host to start the game
-            </div>
-          )}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem", marginTop: "1rem" }}>
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            {isHost ? (
+              <button
+                className="soft-button"
+                onClick={startGame}
+                disabled={players.length < 5}
+                style={{
+                  minWidth: "220px",
+                  background: players.length < 5 ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)",
+                  color: players.length < 5 ? "var(--muted)" : "white",
+                  opacity: players.length < 5 ? 0.7 : 1,
+                  cursor: players.length < 5 ? "not-allowed" : "pointer",
+                }}
+              >
+                Start Game
+              </button>
+            ) : (
+              <div
+                className="soft-panel"
+                style={{
+                  borderRadius: "999px",
+                  padding: "0.9rem 1.2rem",
+                  background: "rgba(255,252,247,0.76)",
+                  color: "var(--muted)",
+                }}
+              >
+                Waiting for the host to start the game
+              </div>
+            )}
+          </div>
+          <button
+            className="soft-button"
+            onClick={onLeaveRoom}
+            style={{
+              padding: "0.55rem 1.2rem",
+              background: "rgba(216,139,139,0.12)",
+              border: "1px solid rgba(216,139,139,0.2)",
+              color: "#af6666",
+              fontSize: "0.88rem"
+            }}
+          >
+            Leave Room
+          </button>
         </div>
       </div>
     </div>

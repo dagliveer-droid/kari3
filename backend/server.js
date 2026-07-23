@@ -806,6 +806,11 @@ io.on("connection", socket => {
     const room = await getRoom(roomCode);
     if (!room || !room.players.includes(playerId)) return;
 
+    if (room.sockets[playerId] && room.sockets[playerId] !== socket.id) {
+      console.log(`Disconnect ignored for player ${playerId} on socket ${socket.id} (already active on newer socket ${room.sockets[playerId]})`);
+      return;
+    }
+
     if (room.sockets[playerId] === socket.id) {
       delete room.sockets[playerId];
     }

@@ -8,7 +8,7 @@ import GameOverOverlay from "../components/overlays/GameOverOverlay";
 import { SUIT_NAMES, formatCard } from "../constants";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Game({ roomCode, myId, myName, state, myHand }) {
+export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoom }) {
   const [selectedCard, setSelectedCard] = useState(null);
   const [selectedCardIdx, setSelectedCardIdx] = useState(null);
   const [trickCards, setTrickCards] = useState([]);
@@ -266,15 +266,37 @@ export default function Game({ roomCode, myId, myName, state, myHand }) {
             )}
           </div>
 
-          <div
-            className={`status-pill ${isMyTurn ? "turn-glow" : ""}`}
-            style={{
-              background: isMyTurn ? "rgba(219,143,122,0.16)" : "rgba(138,118,107,0.12)",
-              color: isMyTurn ? "#b56d58" : "var(--muted)",
-              border: "1px solid rgba(117,96,84,0.08)",
-            }}
-          >
-            {isMyTurn ? "Your turn" : state.paused ? "Paused" : "Waiting"}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
+            <div
+              className={`status-pill ${isMyTurn ? "turn-glow" : ""}`}
+              style={{
+                background: isMyTurn ? "rgba(219,143,122,0.16)" : "rgba(138,118,107,0.12)",
+                color: isMyTurn ? "#b56d58" : "var(--muted)",
+                border: "1px solid rgba(117,96,84,0.08)",
+              }}
+            >
+              {isMyTurn ? "Your turn" : state.paused ? "Paused" : "Waiting"}
+            </div>
+            <button
+              className="soft-button"
+              onClick={() => {
+                if (window.confirm("Are you sure you want to leave the active game?")) {
+                  onLeaveRoom();
+                }
+              }}
+              style={{
+                padding: "0.45rem 0.8rem",
+                borderRadius: "999px",
+                background: "rgba(216,139,139,0.12)",
+                border: "1px solid rgba(216,139,139,0.2)",
+                color: "#af6666",
+                fontSize: "0.78rem",
+                fontWeight: 700,
+                cursor: "pointer"
+              }}
+            >
+              Exit Game
+            </button>
           </div>
         </div>
 
