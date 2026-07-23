@@ -118,6 +118,18 @@ export default function Game({ roomCode, myId, myName, state, myHand }) {
     decks: state.config?.decks || 1,
   };
 
+  const bidderNameVal = state.highestBidder
+    ? (state.players?.find(p => p.id === state.highestBidder)?.name || "-")
+    : "-";
+
+  const headerItems = [
+    { label: "Room", value: roomCode },
+    { label: "Bidder", value: bidderNameVal },
+    { label: "Bid", value: state.highestBid || "-" },
+    { label: "Trump", value: trump },
+    { label: "Phase", value: state.phase || "-" },
+  ];
+
   return (
     <div
       className="soft-shell"
@@ -197,30 +209,61 @@ export default function Game({ roomCode, myId, myName, state, myHand }) {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ display: "flex", gap: "0.7rem", flexWrap: "wrap" }}>
-            {[
-              { label: "Room", value: roomCode },
-              { label: "Trump", value: trump },
-              { label: "Bid", value: state.highestBid || "-" },
-              { label: "Phase", value: state.phase || "-" },
-            ].map(item => (
-              <div
-                key={item.label}
-                style={{
-                  padding: "0.55rem 0.85rem",
-                  borderRadius: "16px",
-                  background: "rgba(255,255,255,0.68)",
-                  border: "1px solid rgba(117,96,84,0.09)",
-                }}
-              >
-                <div style={{ fontSize: "0.68rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
-                  {item.label}
+          <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "0.7rem", flexWrap: "wrap" }}>
+              {headerItems.map(item => (
+                <div
+                  key={item.label}
+                  style={{
+                    padding: "0.55rem 0.85rem",
+                    borderRadius: "16px",
+                    background: "rgba(255,255,255,0.68)",
+                    border: "1px solid rgba(117,96,84,0.09)",
+                  }}
+                >
+                  <div style={{ fontSize: "0.68rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                    {item.label}
+                  </div>
+                  <div style={{ marginTop: "0.2rem", color: "var(--text)", fontWeight: 700 }}>
+                    {item.value}
+                  </div>
                 </div>
-                <div style={{ marginTop: "0.2rem", color: "var(--text)", fontWeight: 700 }}>
-                  {item.value}
+              ))}
+            </div>
+
+            {state.partnerCardTracker && Object.keys(state.partnerCardTracker).length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", paddingLeft: "0.75rem", borderLeft: "1px solid rgba(117,96,84,0.15)" }}>
+                <div style={{ fontSize: "0.68rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                  Called
+                </div>
+                <div style={{ display: "flex", gap: "0.7rem", alignItems: "center" }}>
+                  {Object.entries(state.partnerCardTracker).map(([card, tracker]) => (
+                    <div key={card} style={{ position: "relative", display: "inline-flex", paddingRight: "4px" }}>
+                      <Card card={card} small disabled />
+                      <span
+                        className="status-pill"
+                        style={{
+                          position: "absolute",
+                          bottom: "-4px",
+                          right: "-8px",
+                          background: "var(--paper-strong)",
+                          border: "1px solid rgba(117,96,84,0.16)",
+                          fontSize: "0.68rem",
+                          padding: "0.15rem 0.4rem",
+                          borderRadius: "8px",
+                          boxShadow: "0 2px 8px rgba(123,98,85,0.12)",
+                          color: tracker.revealed >= tracker.needed ? "#5a7a5d" : "#b56d58",
+                          fontWeight: 800,
+                          zIndex: 10
+                        }}
+                      >
+                        {tracker.revealed}/{tracker.needed}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
+            )}
           </div>
 
           <div
@@ -240,6 +283,9 @@ export default function Game({ roomCode, myId, myName, state, myHand }) {
             {otherPlayers.map(player => {
               const isActive = state.currentTurn === player.id && state.phase === "playing" && !state.paused;
               const isPartner = state.revealedPartners?.includes(player.id);
+              const isBidder = state.highestBidder === player.id;
+              const revealedCard = state.revealedPartnerCards?.[player.id];
+              const partnerBadgeText = revealedCard ? `Partner (${formatCard(revealedCard)})` : "Partner";
               return (
                 <div
                   key={player.id}
@@ -264,9 +310,14 @@ export default function Game({ roomCode, myId, myName, state, myHand }) {
                         Offline
                       </span>
                     )}
+                    {isBidder && (
+                      <span className="status-pill" style={{ background: "rgba(210,180,125,0.18)", color: "#9a7a42" }}>
+                        Bidder
+                      </span>
+                    )}
                     {isPartner && (
                       <span className="status-pill" style={{ background: "rgba(143,174,146,0.16)", color: "#68806a" }}>
-                        Partner
+                        {partnerBadgeText}
                       </span>
                     )}
                   </div>
@@ -348,7 +399,19 @@ export default function Game({ roomCode, myId, myName, state, myHand }) {
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem", flexWrap: "wrap", alignItems: "center" }}>
               <div>
-                <div style={{ fontFamily: '"Fraunces", serif', fontSize: "1.4rem", color: "var(--text)" }}>{myName || "You"}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                  <span style={{ fontFamily: '"Fraunces", serif', fontSize: "1.4rem", color: "var(--text)" }}>{myName || "You"}</span>
+                  {state.highestBidder === myId && (
+                    <span className="status-pill" style={{ background: "rgba(210,180,125,0.18)", color: "#9a7a42", padding: "0.25rem 0.55rem", fontSize: "0.74rem" }}>
+                      Bidder
+                    </span>
+                  )}
+                  {state.revealedPartners?.includes(myId) && (
+                    <span className="status-pill" style={{ background: "rgba(143,174,146,0.16)", color: "#68806a", padding: "0.25rem 0.55rem", fontSize: "0.74rem" }}>
+                      {state.revealedPartnerCards?.[myId] ? `Partner (${formatCard(state.revealedPartnerCards[myId])})` : "Partner"}
+                    </span>
+                  )}
+                </div>
                 <div style={{ color: "var(--muted)", fontSize: "0.88rem" }}>{myHand.length} cards in hand</div>
               </div>
               <div

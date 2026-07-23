@@ -20,7 +20,7 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const DISCONNECT_GRACE_MS = 60_000;
+const DISCONNECT_GRACE_MS = 10 * 60_000; // 10 minutes grace period
 const RESTART_DISCONNECT_GRACE_MS = 10 * 60_000;
 const rooms = {};
 const socketSessions = {};
@@ -54,6 +54,7 @@ function createRoomState(hostPlayerId, hostSocketId, hostName) {
     highestBidder: null,
     trump: null,
     partnerCardTracker: {},
+    revealedPartnerCards: {},
     trick: [],
     leadSuit: null,
     leaderIndex: 0,
@@ -85,6 +86,7 @@ function serializeRoom(room) {
     highestBidder: room.highestBidder,
     trump: room.trump,
     partnerCardTracker: room.partnerCardTracker,
+    revealedPartnerCards: room.revealedPartnerCards,
     trick: room.trick,
     leadSuit: room.leadSuit,
     leaderIndex: room.leaderIndex,
@@ -116,6 +118,7 @@ function hydrateRoom(snapshot) {
     highestBidder: snapshot.highestBidder || null,
     trump: snapshot.trump || null,
     partnerCardTracker: snapshot.partnerCardTracker || {},
+    revealedPartnerCards: snapshot.revealedPartnerCards || {},
     trick: snapshot.trick || [],
     leadSuit: snapshot.leadSuit || null,
     leaderIndex: snapshot.leaderIndex || 0,
@@ -206,6 +209,7 @@ function revealUnplayedPartners(room) {
           if (!room.revealedPartners.includes(playerId)) {
             room.revealedPartners.push(playerId);
           }
+          room.revealedPartnerCards[playerId] = card;
           if (!room.bidTeam.includes(playerId)) {
             room.bidTeam.push(playerId);
           }
@@ -252,6 +256,8 @@ function broadcastRoomState(roomCode) {
     currentTurn: getCurrentTurn(room),
     revealedPartners: room.revealedPartners,
     bidTeam: room.bidTeam,
+    partnerCardTracker: room.partnerCardTracker,
+    revealedPartnerCards: room.revealedPartnerCards,
     gameOver: room.gameOver,
     gameResult: room.gameResult,
     config: room.config,
@@ -571,6 +577,7 @@ io.on("connection", socket => {
     room.highestBidder = null;
     room.currentBidder = room.players[0];
     room.partnerCardTracker = {};
+    room.revealedPartnerCards = {};
     room.trump = null;
     room.trick = [];
     room.leadSuit = null;
@@ -673,6 +680,7 @@ io.on("connection", socket => {
     if (partnerError) return sendError(socket, partnerError);
 
     room.partnerCardTracker = {};
+    room.revealedPartnerCards = {};
     cards.forEach(({ card, quantity }) => {
       room.partnerCardTracker[card] = { needed: quantity, revealed: 0 };
     });
@@ -729,6 +737,7 @@ io.on("connection", socket => {
       if (!room.revealedPartners.includes(playerId)) {
         room.revealedPartners.push(playerId);
       }
+      room.revealedPartnerCards[playerId] = card;
       if (!room.bidTeam.includes(playerId)) {
         room.bidTeam.push(playerId);
       }
