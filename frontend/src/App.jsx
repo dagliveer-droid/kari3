@@ -149,6 +149,19 @@ export default function App() {
       alert("You have been kicked from the room.");
     };
 
+    const handleSessionReplaced = () => {
+      clearSession();
+      clearSessionActive();
+      setSavedSession(null);
+      setScreen("lobby");
+      setRoomCode("");
+      setMyId(null);
+      setMyName("");
+      setGameState({});
+      setMyHand([]);
+      alert("You have been disconnected because the room was joined from another tab or window.");
+    };
+
     socket.on("connect", handleConnect);
     socket.on("room_created", handleJoined);
     socket.on("joined_room", handleJoined);
@@ -158,6 +171,7 @@ export default function App() {
     socket.on("game_error", handleError);
     socket.on("reconnect_failed", handleReconnectFailed);
     socket.on("kicked", handleKicked);
+    socket.on("session_replaced", handleSessionReplaced);
 
     if (savedSession && shouldAutoReconnect) {
       if (socket.connected) {
@@ -177,6 +191,7 @@ export default function App() {
       socket.off("game_error", handleError);
       socket.off("reconnect_failed", handleReconnectFailed);
       socket.off("kicked", handleKicked);
+      socket.off("session_replaced", handleSessionReplaced);
     };
   }, [savedSession, myName, shouldAutoReconnect]);
 

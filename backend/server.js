@@ -560,6 +560,15 @@ io.on("connection", socket => {
       return;
     }
 
+    const oldSocketId = room.sockets[playerId];
+    if (oldSocketId && oldSocketId !== socket.id) {
+      const oldSocket = io.sockets.sockets.get(oldSocketId);
+      if (oldSocket) {
+        oldSocket.emit("session_replaced");
+        oldSocket.disconnect(true);
+      }
+    }
+
     room.sockets[playerId] = socket.id;
     if (name) room.names[playerId] = name;
     room.disconnected.delete(playerId);
