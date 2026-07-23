@@ -335,7 +335,12 @@ function scheduleDisconnectExpiry(roomCode, playerId, isServerRestart = false) {
   room.disconnectTimers[playerId] = setTimeout(async () => {
     const liveRoom = rooms[roomCode];
     if (!liveRoom || !liveRoom.disconnected.has(playerId) || liveRoom.gameOver) return;
-    await endGame(liveRoom, roomCode, `${liveRoom.names[playerId]} did not reconnect in time. Game ended.`, false);
+
+    if (liveRoom.phase === "waiting") {
+      await removeWaitingPlayer(roomCode, playerId);
+    } else {
+      await endGame(liveRoom, roomCode, `${liveRoom.names[playerId]} did not reconnect in time. Game ended.`, false);
+    }
   }, graceMs);
 }
 
@@ -507,6 +512,11 @@ io.on("connection", socket => {
   console.log("Connected:", socket.id);
 
   socket.on("create_room", async ({ name }) => {
+    if (getSession(socket.id)) {
+      console.log(`create_room ignored for socket ${socket.id} (already has session)`);
+      return;
+    }
+
     const roomCode = await generateRoomCode();
     const playerId = generateId("p_");
 
@@ -520,6 +530,12 @@ io.on("connection", socket => {
   });
 
   socket.on("join_room", async ({ roomCode, name }) => {
+    const existing = getSession(socket.id);
+    if (existing && existing.roomCode === roomCode) {
+      console.log(`Duplicate join_room ignored for socket ${socket.id} in room ${roomCode}`);
+      return;
+    }
+
     const room = await getRoom(roomCode);
     if (!room) return sendError(socket, "Room not found");
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
@@ -796,6 +812,39 @@ io.on("connection", socket => {
     broadcastRoomState(roomCode);
   });
 
+  socket.on("transfer_host", async ({ roomCode, targetPlayerId }) => {
+    const room = await getRoom(roomCode);
+    const session = getSession(socket.id);
+    if (!room || !session || session.roomCode !== roomCode) return;
+    if (room.hostId !== session.playerId) return sendError(socket, "Only host can transfer host rights");
+    if (!room.players.includes(targetPlayerId)) return sendError(socket, "Target player not found");
+
+    room.hostId = targetPlayerId;
+    await persistRoom(roomCode);
+    broadcastRoomState(roomCode);
+  });
+
+  socket.on("kick_player", async ({ roomCode, targetPlayerId }) => {
+    const room = await getRoom(roomCode);
+    const session = getSession(socket.id);
+    if (!room || !session || session.roomCode !== roomCode) return;
+    if (room.hostId !== session.playerId) return sendError(socket, "Only host can kick players");
+    if (targetPlayerId === room.hostId) return sendError(socket, "Host cannot kick themselves");
+    if (!room.players.includes(targetPlayerId)) return sendError(socket, "Target player not found");
+
+    if (room.phase === "waiting") {
+      const targetSocketId = room.sockets[targetPlayerId];
+      if (targetSocketId) {
+        const targetSocket = io.sockets.sockets.get(targetSocketId);
+        if (targetSocket) {
+          targetSocket.emit("kicked");
+          targetSocket.leave(roomCode);
+        }
+      }
+      await removeWaitingPlayer(roomCode, targetPlayerId);
+    }
+  });
+
   socket.on("disconnect", async () => {
     console.log("Disconnected:", socket.id);
     const session = getSession(socket.id);
@@ -813,15 +862,6 @@ io.on("connection", socket => {
 
     if (room.sockets[playerId] === socket.id) {
       delete room.sockets[playerId];
-    }
-
-    if (room.phase === "waiting") {
-      const playerName = room.names[playerId];
-      await removeWaitingPlayer(roomCode, playerId);
-      if (rooms[roomCode]) {
-        io.to(roomCode).emit("player_left", { name: playerName, disconnected: false });
-      }
-      return;
     }
 
     room.disconnected.add(playerId);

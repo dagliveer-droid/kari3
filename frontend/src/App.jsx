@@ -136,6 +136,19 @@ export default function App() {
       setMyHand([]);
     };
 
+    const handleKicked = () => {
+      clearSession();
+      clearSessionActive();
+      setSavedSession(null);
+      setScreen("lobby");
+      setRoomCode("");
+      setMyId(null);
+      setMyName("");
+      setGameState({});
+      setMyHand([]);
+      alert("You have been kicked from the room.");
+    };
+
     socket.on("connect", handleConnect);
     socket.on("room_created", handleJoined);
     socket.on("joined_room", handleJoined);
@@ -144,6 +157,7 @@ export default function App() {
     socket.on("your_hand", handleHand);
     socket.on("game_error", handleError);
     socket.on("reconnect_failed", handleReconnectFailed);
+    socket.on("kicked", handleKicked);
 
     if (savedSession && shouldAutoReconnect) {
       if (socket.connected) {
@@ -162,6 +176,7 @@ export default function App() {
       socket.off("your_hand", handleHand);
       socket.off("game_error", handleError);
       socket.off("reconnect_failed", handleReconnectFailed);
+      socket.off("kicked", handleKicked);
     };
   }, [savedSession, myName, shouldAutoReconnect]);
 

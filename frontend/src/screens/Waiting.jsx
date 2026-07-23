@@ -136,9 +136,62 @@ export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom }
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
-                {player.id === hostId && <div className="status-pill" style={{ background: "rgba(210,180,125,0.18)", color: "#9a7a42" }}>Host</div>}
-                {player.connected === false && <div className="status-pill" style={{ background: "rgba(216,139,139,0.14)", color: "#af6666" }}>Offline</div>}
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
+                {player.id === hostId ? (
+                  <div className="status-pill" style={{ background: "rgba(210,180,125,0.18)", color: "#9a7a42" }}>Host</div>
+                ) : (
+                  <>
+                    {player.connected === false && (
+                      <div className="status-pill" style={{ background: "rgba(216,139,139,0.14)", color: "#af6666" }}>
+                        Offline
+                      </div>
+                    )}
+                    {isHost && (
+                      <div style={{ display: "flex", gap: "0.4rem" }}>
+                        <button
+                          className="soft-button"
+                          onClick={() => {
+                            if (window.confirm(`Transfer host rights to ${player.name}?`)) {
+                              socket.emit("transfer_host", { roomCode, targetPlayerId: player.id });
+                            }
+                          }}
+                          style={{
+                            padding: "0.3rem 0.6rem",
+                            fontSize: "0.74rem",
+                            borderRadius: "10px",
+                            background: "rgba(210,180,125,0.12)",
+                            border: "1px solid rgba(210,180,125,0.22)",
+                            color: "#836531",
+                            fontWeight: 700,
+                            cursor: "pointer"
+                          }}
+                        >
+                          👑 Make Host
+                        </button>
+                        <button
+                          className="soft-button"
+                          onClick={() => {
+                            if (window.confirm(`Are you sure you want to kick ${player.name}?`)) {
+                              socket.emit("kick_player", { roomCode, targetPlayerId: player.id });
+                            }
+                          }}
+                          style={{
+                            padding: "0.3rem 0.6rem",
+                            fontSize: "0.74rem",
+                            borderRadius: "10px",
+                            background: "rgba(216,139,139,0.1)",
+                            border: "1px solid rgba(216,139,139,0.2)",
+                            color: "#af6666",
+                            fontWeight: 700,
+                            cursor: "pointer"
+                          }}
+                        >
+                          ❌ Kick
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           ))}

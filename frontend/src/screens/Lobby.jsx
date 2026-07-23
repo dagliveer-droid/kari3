@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
@@ -6,6 +6,14 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
   const [name, setName] = useState("");
   const [code, setCode] = useState(initialRoomCode || "");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (loading) {
+      const t = setTimeout(() => setLoading(false), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [loading]);
 
   function handleNameChange(value) {
     setName(value);
@@ -13,11 +21,13 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
   }
 
   function createRoom() {
+    if (loading) return;
     if (!name.trim()) {
       setError("Enter your name first");
       return;
     }
 
+    setLoading(true);
     initAudio();
     playUiSound("join");
     setError("");
@@ -26,6 +36,7 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
   }
 
   function joinRoom() {
+    if (loading) return;
     if (!name.trim()) {
       setError("Enter your name first");
       return;
@@ -35,6 +46,7 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
       return;
     }
 
+    setLoading(true);
     initAudio();
     playUiSound("join");
     setError("");
@@ -208,10 +220,11 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
           )}
 
           <input
-            style={input}
+            style={{ ...input, opacity: loading ? 0.6 : 1 }}
             placeholder="Your name"
             maxLength={16}
             value={name}
+            disabled={loading}
             onChange={event => handleNameChange(event.target.value)}
             onKeyDown={event => event.key === "Enter" && createRoom()}
           />
@@ -234,12 +247,14 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
           <button
             className="soft-button"
             style={{
-              background: "linear-gradient(135deg, #e6a590, #d88f7a)",
-              color: "white",
+              background: loading ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)",
+              color: loading ? "var(--muted)" : "white",
+              cursor: loading ? "not-allowed" : "pointer",
             }}
+            disabled={loading}
             onClick={createRoom}
           >
-            Create Room
+            {loading ? "Creating..." : "Create Room"}
           </button>
 
           <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", color: "var(--muted)", fontSize: "0.82rem" }}>
@@ -249,10 +264,11 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
           </div>
 
           <input
-            style={{ ...input, textTransform: "uppercase" }}
+            style={{ ...input, textTransform: "uppercase", opacity: loading ? 0.6 : 1 }}
             placeholder="Room code"
             maxLength={5}
             value={code}
+            disabled={loading}
             onChange={event => setCode(event.target.value.toUpperCase())}
             onKeyDown={event => event.key === "Enter" && joinRoom()}
           />
@@ -260,13 +276,15 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
           <button
             className="soft-button"
             style={{
-              background: "rgba(255,255,255,0.72)",
-              color: "var(--text)",
+              background: loading ? "rgba(138,118,107,0.18)" : "rgba(255,255,255,0.72)",
+              color: loading ? "var(--muted)" : "var(--text)",
               borderColor: "rgba(117,96,84,0.14)",
+              cursor: loading ? "not-allowed" : "pointer",
             }}
+            disabled={loading}
             onClick={joinRoom}
           >
-            Join Room
+            {loading ? "Joining..." : "Join Room"}
           </button>
         </div>
       </div>
