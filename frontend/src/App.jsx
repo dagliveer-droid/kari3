@@ -48,13 +48,27 @@ function clearSessionActive() {
   }
 }
 
+function getRoomCodeFromPath() {
+  if (typeof window === "undefined") return "";
+  const path = window.location.pathname.substring(1);
+  if (/^[A-Za-z0-9]{5}$/.test(path)) {
+    return path.toUpperCase();
+  }
+  return "";
+}
+
 export default function App() {
   const [savedSession, setSavedSession] = useState(() => loadSession());
   const [shouldAutoReconnect] = useState(() => hasActiveSessionMarker());
   const [screen, setScreen] = useState("lobby");
   const [myId, setMyId] = useState(savedSession?.playerId || null);
   const [myName, setMyName] = useState(savedSession?.name || "");
-  const [roomCode, setRoomCode] = useState(savedSession?.roomCode || "");
+  const [initialRoomCode] = useState(() => getRoomCodeFromPath());
+  const [roomCode, setRoomCode] = useState(() => {
+    const codeFromPath = getRoomCodeFromPath();
+    if (codeFromPath) return codeFromPath;
+    return savedSession?.roomCode || "";
+  });
   const [gameState, setGameState] = useState({});
   const [myHand, setMyHand] = useState([]);
 
@@ -169,6 +183,7 @@ export default function App() {
         onNameChange={setMyName}
         savedSession={savedSession}
         onResumeSavedRoom={resumeSavedRoom}
+        initialRoomCode={initialRoomCode}
       />
     );
   }

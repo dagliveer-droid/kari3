@@ -2,9 +2,9 @@ import { useState } from "react";
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom }) {
+export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, initialRoomCode }) {
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(initialRoomCode || "");
   const [error, setError] = useState("");
 
   function handleNameChange(value) {

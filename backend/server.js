@@ -30,6 +30,9 @@ app.use(express.static(path.join(__dirname, "../frontend/dist")));
 app.get("/health", (_req, res) => {
   res.json({ ok: true, persistentRooms: roomStore.enabled });
 });
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(__dirname, "../frontend/dist/index.html"));
+});
 
 function generateId(prefix = "") {
   return `${prefix}${Math.random().toString(36).substring(2, 10)}`;
