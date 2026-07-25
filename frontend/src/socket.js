@@ -5,4 +5,11 @@ const URL = import.meta.env.DEV
   ? "http://localhost:3000"
   : import.meta.env.VITE_SOCKET_URL || window.location.origin;
 
-export const socket = io(URL, { autoConnect: false });
+export const socket = io(URL, {
+  autoConnect: false,
+  reconnection: true,
+  reconnectionAttempts: 20,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 10000,
+});

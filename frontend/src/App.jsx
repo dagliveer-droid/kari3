@@ -249,10 +249,12 @@ export default function App() {
     setMyName("");
     setGameState({});
     setMyHand([]);
+    setConnectionTrouble(false);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/");
     }
-    socket.connect();
+    // Small delay so the server processes the disconnect before we reconnect
+    setTimeout(() => socket.connect(), 100);
   }
 
   function handleClearSession() {

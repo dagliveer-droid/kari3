@@ -31,8 +31,13 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, o
     initAudio();
     playUiSound("join");
     setError("");
-    socket.connect();
-    socket.emit("create_room", { name: name.trim() });
+    const payload = { name: name.trim() };
+    if (socket.connected) {
+      socket.emit("create_room", payload);
+    } else {
+      socket.connect();
+      socket.once("connect", () => socket.emit("create_room", payload));
+    }
   }
 
   function joinRoom() {
@@ -50,8 +55,13 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, o
     initAudio();
     playUiSound("join");
     setError("");
-    socket.connect();
-    socket.emit("join_room", { roomCode: code.trim().toUpperCase(), name: name.trim() });
+    const payload = { roomCode: code.trim().toUpperCase(), name: name.trim() };
+    if (socket.connected) {
+      socket.emit("join_room", payload);
+    } else {
+      socket.connect();
+      socket.once("connect", () => socket.emit("join_room", payload));
+    }
   }
 
   return (

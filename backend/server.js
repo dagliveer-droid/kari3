@@ -546,7 +546,12 @@ io.on("connection", socket => {
       return;
     }
 
-    const room = await getRoom(roomCode);
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     if (!room) return sendError(socket, "Room not found");
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
     if (room.players.length >= 11) return sendError(socket, "Room is full (max 11)");
@@ -896,7 +901,13 @@ io.on("connection", socket => {
     if (!session) return;
 
     const { roomCode, playerId } = session;
-    const room = await getRoom(roomCode);
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      console.error(`DB error during disconnect for room ${roomCode}:`, err.message);
+      return;
+    }
     if (!room || !room.players.includes(playerId)) return;
 
     if (room.sockets[playerId] && room.sockets[playerId] !== socket.id) {
