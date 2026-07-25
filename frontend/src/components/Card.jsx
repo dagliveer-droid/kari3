@@ -7,8 +7,8 @@ export default function Card({ card, small, selected, disabled, onClick }) {
   const isKaariTeedi = suit === "SPADES" && rank === "3";
   const isRed = ["HEARTS", "DIAMONDS"].includes(suit);
 
-  const width = small ? 66 : 82;
-  const height = small ? 94 : 118;
+  const width = small ? 78 : 104;
+  const height = small ? 110 : 148;
 
   const baseStyle = {
     width,

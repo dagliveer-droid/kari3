@@ -56,9 +56,16 @@ function dealCards(players, decks) {
   return hands;
 }
 
+const ALL_CARDS = [];
+for (const suit of SUITS) {
+  for (const rank of RANKS) {
+    ALL_CARDS.push(`${suit}_${rank}`);
+  }
+}
+
 function getCardPointsFromString(card) {
   const [suit, rank] = card.split("_");
   return getCardPoints(suit, rank);
 }
 
-module.exports = { dealCards, getCardPoints: getCardPointsFromString };
+module.exports = { dealCards, getCardPoints: getCardPointsFromString, ALL_CARDS };

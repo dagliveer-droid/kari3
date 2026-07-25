@@ -18,6 +18,10 @@ function createRoomStore() {
     ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
   });
 
+  pool.on("error", (err) => {
+    console.error("Unexpected PG pool error:", err);
+  });
+
   let initPromise;
 
   function init() {
@@ -43,17 +47,12 @@ function createRoomStore() {
       }
     },
     async get(roomCode) {
-      try {
-        await init();
-        const result = await pool.query(
-          "SELECT state FROM game_rooms WHERE room_code = $1",
-          [roomCode],
-        );
-        return result.rows[0]?.state || null;
-      } catch (err) {
-        console.error(`DB roomStore.get error for ${roomCode}:`, err);
-        return null;
-      }
+      await init();
+      const result = await pool.query(
+        "SELECT state FROM game_rooms WHERE room_code = $1",
+        [roomCode],
+      );
+      return result.rows[0]?.state || null;
     },
     async has(roomCode) {
       try {

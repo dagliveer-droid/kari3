@@ -33,7 +33,7 @@ export default function BidOverlay({ state, roomCode, myId }) {
         position: "fixed",
         left: "max(1rem, calc((100vw - 1240px) / 2 + 1rem))",
         right: "max(1rem, calc((100vw - 1240px) / 2 + 1rem))",
-        bottom: "1rem",
+        top: "5.5rem",
         zIndex: 80,
         borderRadius: "28px",
         padding: "1rem 1.15rem",

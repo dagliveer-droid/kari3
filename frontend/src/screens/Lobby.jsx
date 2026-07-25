@@ -179,113 +179,135 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, i
             justifyContent: "center",
           }}
         >
-          <div style={{ display: "grid", gap: "0.4rem" }}>
-            <div style={{ color: "var(--muted)", fontSize: "0.78rem", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
-              Enter Table
-            </div>
-            <div style={{ fontFamily: '"Fraunces", serif', fontSize: "2rem", color: "var(--text)" }}>
-              Start with your name
-            </div>
-          </div>
+          {savedSession?.roomCode && savedSession?.playerId ? (
+            <>
+              <div style={{ display: "grid", gap: "0.4rem" }}>
+                <div style={{ color: "var(--muted)", fontSize: "0.78rem", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
+                  Active Table Found
+                </div>
+                <div style={{ fontFamily: '"Fraunces", serif', fontSize: "2rem", color: "var(--text)" }}>
+                  Resume your seat
+                </div>
+              </div>
 
-          {savedSession?.roomCode && savedSession?.playerId && (
-            <div
-              className="soft-panel"
-              style={{
-                borderRadius: "20px",
-                padding: "0.95rem 1rem",
-                background: "rgba(255,255,255,0.72)",
-                display: "grid",
-                gap: "0.55rem",
-              }}
-            >
-              <div style={{ color: "var(--muted)", fontSize: "0.78rem", fontWeight: 700 }}>
-                Previous room found
+              <div
+                className="soft-panel"
+                style={{
+                  borderRadius: "20px",
+                  padding: "1rem",
+                  background: "rgba(255,255,255,0.72)",
+                  display: "grid",
+                  gap: "0.7rem",
+                }}
+              >
+                <div style={{ color: "var(--text)", fontSize: "1.05rem" }}>
+                  <strong>{savedSession.name || "Player"}</strong> in room <strong>{savedSession.roomCode}</strong>
+                </div>
+                
+                <button
+                  className="soft-button"
+                  style={{
+                    background: "linear-gradient(135deg, #e6a590, #d88f7a)",
+                    color: "white",
+                  }}
+                  onClick={onResumeSavedRoom}
+                >
+                  Resume Game
+                </button>
+
+                <button
+                  className="soft-button"
+                  style={{
+                    background: "rgba(216,139,139,0.12)",
+                    borderColor: "rgba(216,139,139,0.2)",
+                    color: "#af6666",
+                  }}
+                  onClick={onClearSession}
+                >
+                  Join a different room
+                </button>
               </div>
-              <div style={{ color: "var(--text)", fontSize: "0.92rem" }}>
-                {savedSession.name || "Player"} in room <strong>{savedSession.roomCode}</strong>
+            </>
+          ) : (
+            <>
+              <div style={{ display: "grid", gap: "0.4rem" }}>
+                <div style={{ color: "var(--muted)", fontSize: "0.78rem", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
+                  Enter Table
+                </div>
+                <div style={{ fontFamily: '"Fraunces", serif', fontSize: "2rem", color: "var(--text)" }}>
+                  Start with your name
+                </div>
               </div>
+
+              <input
+                style={{ ...input, opacity: loading ? 0.6 : 1 }}
+                placeholder="Your name"
+                maxLength={16}
+                value={name}
+                disabled={loading}
+                onChange={event => handleNameChange(event.target.value)}
+                onKeyDown={event => event.key === "Enter" && createRoom()}
+              />
+
+              {error && (
+                <div
+                  style={{
+                    color: "#b36d6d",
+                    background: "rgba(216,139,139,0.12)",
+                    border: "1px solid rgba(216,139,139,0.2)",
+                    borderRadius: "18px",
+                    padding: "0.8rem 0.95rem",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  {error}
+                </div>
+              )}
+
               <button
                 className="soft-button"
                 style={{
-                  background: "rgba(255,255,255,0.9)",
-                  color: "var(--text)",
-                  borderColor: "rgba(117,96,84,0.14)",
+                  background: loading ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)",
+                  color: loading ? "var(--muted)" : "white",
+                  cursor: loading ? "not-allowed" : "pointer",
                 }}
-                onClick={onResumeSavedRoom}
+                disabled={loading}
+                onClick={createRoom}
               >
-                Resume Previous Room
+                {loading ? "Creating..." : "Create Room"}
               </button>
-            </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", color: "var(--muted)", fontSize: "0.82rem" }}>
+                <div style={{ flex: 1, height: "1px", background: "rgba(117,96,84,0.15)" }} />
+                <span>or join an existing table</span>
+                <div style={{ flex: 1, height: "1px", background: "rgba(117,96,84,0.15)" }} />
+              </div>
+
+              <input
+                style={{ ...input, textTransform: "uppercase", opacity: loading ? 0.6 : 1 }}
+                placeholder="Room code"
+                maxLength={5}
+                value={code}
+                disabled={loading}
+                onChange={event => setCode(event.target.value.toUpperCase())}
+                onKeyDown={event => event.key === "Enter" && joinRoom()}
+              />
+
+              <button
+                className="soft-button"
+                style={{
+                  background: loading ? "rgba(138,118,107,0.18)" : "rgba(255,255,255,0.72)",
+                  color: loading ? "var(--muted)" : "var(--text)",
+                  borderColor: "rgba(117,96,84,0.14)",
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+                disabled={loading}
+                onClick={joinRoom}
+              >
+                {loading ? "Joining..." : "Join Room"}
+              </button>
+            </>
           )}
-
-          <input
-            style={{ ...input, opacity: loading ? 0.6 : 1 }}
-            placeholder="Your name"
-            maxLength={16}
-            value={name}
-            disabled={loading}
-            onChange={event => handleNameChange(event.target.value)}
-            onKeyDown={event => event.key === "Enter" && createRoom()}
-          />
-
-          {error && (
-            <div
-              style={{
-                color: "#b36d6d",
-                background: "rgba(216,139,139,0.12)",
-                border: "1px solid rgba(216,139,139,0.2)",
-                borderRadius: "18px",
-                padding: "0.8rem 0.95rem",
-                fontSize: "0.9rem",
-              }}
-            >
-              {error}
-            </div>
-          )}
-
-          <button
-            className="soft-button"
-            style={{
-              background: loading ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)",
-              color: loading ? "var(--muted)" : "white",
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-            disabled={loading}
-            onClick={createRoom}
-          >
-            {loading ? "Creating..." : "Create Room"}
-          </button>
-
-          <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", color: "var(--muted)", fontSize: "0.82rem" }}>
-            <div style={{ flex: 1, height: "1px", background: "rgba(117,96,84,0.15)" }} />
-            <span>or join an existing table</span>
-            <div style={{ flex: 1, height: "1px", background: "rgba(117,96,84,0.15)" }} />
-          </div>
-
-          <input
-            style={{ ...input, textTransform: "uppercase", opacity: loading ? 0.6 : 1 }}
-            placeholder="Room code"
-            maxLength={5}
-            value={code}
-            disabled={loading}
-            onChange={event => setCode(event.target.value.toUpperCase())}
-            onKeyDown={event => event.key === "Enter" && joinRoom()}
-          />
-
-          <button
-            className="soft-button"
-            style={{
-              background: loading ? "rgba(138,118,107,0.18)" : "rgba(255,255,255,0.72)",
-              color: loading ? "var(--muted)" : "var(--text)",
-              borderColor: "rgba(117,96,84,0.14)",
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-            disabled={loading}
-            onClick={joinRoom}
-          >
-            {loading ? "Joining..." : "Join Room"}
-          </button>
         </div>
       </div>
     </div>

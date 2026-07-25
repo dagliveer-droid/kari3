@@ -5,7 +5,6 @@ import Waiting from "./screens/Waiting";
 import Game from "./screens/Game";
 
 const SESSION_KEY = "kaari3-session";
-const ACTIVE_SESSION_KEY = "kaari3-active-session";
 
 function loadSession() {
   try {
@@ -24,30 +23,6 @@ function clearSession() {
   localStorage.removeItem(SESSION_KEY);
 }
 
-function hasActiveSessionMarker() {
-  try {
-    return sessionStorage.getItem(ACTIVE_SESSION_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function markSessionActive() {
-  try {
-    sessionStorage.setItem(ACTIVE_SESSION_KEY, "1");
-  } catch {
-    // Ignore storage errors and continue without auto-resume support.
-  }
-}
-
-function clearSessionActive() {
-  try {
-    sessionStorage.removeItem(ACTIVE_SESSION_KEY);
-  } catch {
-    // Ignore storage errors and continue without auto-resume support.
-  }
-}
-
 function getRoomCodeFromPath() {
   if (typeof window === "undefined") return "";
   const path = window.location.pathname.substring(1);
@@ -58,8 +33,15 @@ function getRoomCodeFromPath() {
 }
 
 export default function App() {
-  const [savedSession, setSavedSession] = useState(() => loadSession());
-  const [shouldAutoReconnect] = useState(() => hasActiveSessionMarker());
+  const [savedSession, setSavedSession] = useState(() => {
+    const session = loadSession();
+    const pathCode = getRoomCodeFromPath();
+    if (pathCode && session && session.roomCode !== pathCode) {
+      clearSession();
+      return null;
+    }
+    return session;
+  });
   const [screen, setScreen] = useState("lobby");
   const [myId, setMyId] = useState(savedSession?.playerId || null);
   const [myName, setMyName] = useState(savedSession?.name || "");
@@ -88,7 +70,6 @@ export default function App() {
       };
       saveSession(session);
       setSavedSession(session);
-      markSessionActive();
       setMyId(playerId);
       setRoomCode(joinedRoomCode);
       setScreen("waiting");
@@ -102,7 +83,6 @@ export default function App() {
         setSavedSession(nextSession);
         setMyName(nextSession.name || "");
       }
-      markSessionActive();
       setMyId(playerId);
       setRoomCode(joinedRoomCode);
     };
@@ -126,7 +106,6 @@ export default function App() {
 
     const handleReconnectFailed = () => {
       clearSession();
-      clearSessionActive();
       setSavedSession(null);
       setScreen("lobby");
       setRoomCode("");
@@ -138,7 +117,6 @@ export default function App() {
 
     const handleKicked = () => {
       clearSession();
-      clearSessionActive();
       setSavedSession(null);
       setScreen("lobby");
       setRoomCode("");
@@ -151,7 +129,6 @@ export default function App() {
 
     const handleSessionReplaced = () => {
       clearSession();
-      clearSessionActive();
       setSavedSession(null);
       setScreen("lobby");
       setRoomCode("");
@@ -165,6 +142,16 @@ export default function App() {
     socket.on("connect", handleConnect);
     socket.on("room_created", handleJoined);
     socket.on("joined_room", handleJoined);
+    const handleReconnectTempUnavailable = () => {
+      alert("Connection trouble — retrying...");
+      setTimeout(() => {
+        const session = loadSession();
+        if (session) {
+          socket.emit("reconnect_room", session);
+        }
+      }, 2000);
+    };
+
     socket.on("reconnected_room", handleReconnected);
     socket.on("room_state", handleRoomState);
     socket.on("your_hand", handleHand);
@@ -172,8 +159,9 @@ export default function App() {
     socket.on("reconnect_failed", handleReconnectFailed);
     socket.on("kicked", handleKicked);
     socket.on("session_replaced", handleSessionReplaced);
+    socket.on("reconnect_temporarily_unavailable", handleReconnectTempUnavailable);
 
-    if (savedSession && shouldAutoReconnect) {
+    if (savedSession) {
       if (socket.connected) {
         handleConnect();
       } else {
@@ -192,15 +180,15 @@ export default function App() {
       socket.off("reconnect_failed", handleReconnectFailed);
       socket.off("kicked", handleKicked);
       socket.off("session_replaced", handleSessionReplaced);
+      socket.off("reconnect_temporarily_unavailable", handleReconnectTempUnavailable);
     };
-  }, [savedSession, myName, shouldAutoReconnect]);
+  }, [savedSession, myName]);
 
   function resumeSavedRoom() {
     if (!savedSession?.roomCode || !savedSession?.playerId) return;
     setMyId(savedSession.playerId);
     setMyName(savedSession.name || "");
     setRoomCode(savedSession.roomCode);
-    markSessionActive();
     if (socket.connected) {
       socket.emit("reconnect_room", savedSession);
     } else {
@@ -211,7 +199,6 @@ export default function App() {
   function leaveRoom() {
     socket.disconnect();
     clearSession();
-    clearSessionActive();
     setSavedSession(null);
     setScreen("lobby");
     setRoomCode("");
@@ -225,6 +212,11 @@ export default function App() {
     socket.connect();
   }
 
+  function handleClearSession() {
+    clearSession();
+    setSavedSession(null);
+  }
+
   const effectiveName =
     gameState.players?.find(player => player.id === myId)?.name || myName;
 
@@ -234,6 +226,7 @@ export default function App() {
         onNameChange={setMyName}
         savedSession={savedSession}
         onResumeSavedRoom={resumeSavedRoom}
+        onClearSession={handleClearSession}
         initialRoomCode={initialRoomCode}
       />
     );

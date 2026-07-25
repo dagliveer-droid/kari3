@@ -2,8 +2,9 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
+const crypto = require("crypto");
 
-const { dealCards } = require("./game/deck");
+const { dealCards, ALL_CARDS } = require("./game/deck");
 const { canPlayCard, resolveTrick } = require("./game/trick");
 const { trickPoints } = require("./game/scoring");
 const createGameConfig = require("./game/config");
@@ -35,7 +36,7 @@ app.get("*", (_req, res) => {
 });
 
 function generateId(prefix = "") {
-  return `${prefix}${Math.random().toString(36).substring(2, 10)}`;
+  return `${prefix}${crypto.randomUUID()}`;
 }
 
 function createPauseReason(room, fallback = "Waiting for players to reconnect") {
@@ -386,7 +387,13 @@ function getSession(socketId) {
 async function getRoom(roomCode) {
   if (rooms[roomCode]) return rooms[roomCode];
 
-  const snapshot = await roomStore.get(roomCode);
+  let snapshot;
+  try {
+    snapshot = await roomStore.get(roomCode);
+  } catch (err) {
+    console.error(`DB error fetching room ${roomCode}:`, err);
+    throw new Error("DB_UNAVAILABLE");
+  }
   if (!snapshot) return null;
 
   const room = hydrateRoom(snapshot);
@@ -461,6 +468,9 @@ function validatePartnerCards(cards, room) {
   for (const entry of cards) {
     if (!entry || typeof entry.card !== "string" || !Number.isInteger(entry.quantity)) {
       return "Invalid partner selection";
+    }
+    if (!ALL_CARDS.includes(entry.card)) {
+      return `Card ${entry.card} is not valid in this game`;
     }
     if (entry.quantity < 1 || entry.quantity > room.config.decks) {
       return `Quantity for ${entry.card} must be 1-${room.config.decks}`;
@@ -541,9 +551,18 @@ io.on("connection", socket => {
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
     if (room.players.length >= 11) return sendError(socket, "Room is full (max 11)");
 
+    const trimmedName = (name || `Player ${room.players.length + 1}`).trim();
+    let finalName = trimmedName;
+    let suffix = 2;
+    const existingNames = Object.values(room.names).map(n => n.toLowerCase());
+    while (existingNames.includes(finalName.toLowerCase())) {
+      finalName = `${trimmedName} (${suffix})`;
+      suffix++;
+    }
+
     const playerId = generateId("p_");
     room.players.push(playerId);
-    room.names[playerId] = name || `Player ${room.players.length}`;
+    room.names[playerId] = finalName;
     room.sockets[playerId] = socket.id;
 
     await persistRoom(roomCode);
@@ -554,7 +573,13 @@ io.on("connection", socket => {
   });
 
   socket.on("reconnect_room", async ({ roomCode, playerId, name }) => {
-    const room = await getRoom(roomCode);
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      socket.emit("reconnect_temporarily_unavailable");
+      return;
+    }
     if (!room || !playerId || !room.players.includes(playerId)) {
       socket.emit("reconnect_failed");
       return;
@@ -589,7 +614,14 @@ io.on("connection", socket => {
     if (!room || !session || session.roomCode !== roomCode) return;
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
     if (room.hostId !== session.playerId) return sendError(socket, "Only host can start");
-    if (room.players.length < 5) return sendError(socket, "Need at least 5 players");
+
+    // Prune any disconnected players before starting
+    const disconnectedList = Array.from(room.disconnected);
+    for (const pid of disconnectedList) {
+      await removeWaitingPlayer(roomCode, pid);
+    }
+
+    if (room.players.length < 5) return sendError(socket, "Need at least 5 connected players to start");
 
     room.config = createGameConfig(room.players.length);
     const hands = dealCards(room.players.length, room.config.decks);
@@ -746,6 +778,9 @@ io.on("connection", socket => {
     }
 
     const hand = room.hands[playerId];
+    if (!Array.isArray(hand)) return sendError(socket, "Hand not found");
+    if (typeof card !== "string" || !card.includes("_")) return sendError(socket, "Malformed card code");
+
     const leadSuit = room.trick.length === 0 ? null : room.leadSuit;
     if (!canPlayCard(hand, card, leadSuit)) {
       return sendError(socket, "You must follow the lead suit");
