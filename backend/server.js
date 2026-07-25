@@ -237,9 +237,21 @@ function getSocketForPlayer(room, playerId) {
   return socketId ? io.sockets.sockets.get(socketId) : null;
 }
 
+function ensureActiveHost(room) {
+  if (!room || room.phase !== "waiting") return;
+  if (!room.hostId || room.disconnected.has(room.hostId)) {
+    const activePlayer = room.players.find(id => !room.disconnected.has(id));
+    if (activePlayer) {
+      room.hostId = activePlayer;
+    }
+  }
+}
+
 function broadcastRoomState(roomCode) {
   const room = rooms[roomCode];
   if (!room) return;
+
+  ensureActiveHost(room);
 
   io.to(roomCode).emit("room_state", {
     players: room.players.map(id => ({
@@ -873,6 +885,16 @@ io.on("connection", socket => {
     broadcastRoomState(roomCode);
   });
 
+  socket.on("end_game", async ({ roomCode }) => {
+    const room = await getRoom(roomCode);
+    const session = getSession(socket.id);
+    if (!room || !session || session.roomCode !== roomCode) return;
+    if (room.hostId !== session.playerId) return sendError(socket, "Only the host can end the game");
+    if (room.phase === "waiting" || room.phase === "gameover") return;
+
+    await endGame(room, roomCode, `Game ended by host (${room.names[room.hostId] || "Host"}).`, false);
+  });
+
   socket.on("kick_player", async ({ roomCode, targetPlayerId }) => {
     const room = await getRoom(roomCode);
     const session = getSession(socket.id);
@@ -891,6 +913,38 @@ io.on("connection", socket => {
         }
       }
       await removeWaitingPlayer(roomCode, targetPlayerId);
+    }
+  });
+
+  socket.on("leave_room", async () => {
+    const session = getSession(socket.id);
+    if (!session) return;
+    const { roomCode, playerId } = session;
+    delete socketSessions[socket.id];
+
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      console.error(`DB error during leave_room for room ${roomCode}:`, err.message);
+      return;
+    }
+    if (!room) return;
+
+    socket.leave(roomCode);
+
+    if (room.phase === "waiting") {
+      await removeWaitingPlayer(roomCode, playerId);
+    } else {
+      if (room.sockets[playerId] === socket.id) {
+        delete room.sockets[playerId];
+      }
+      room.disconnected.add(playerId);
+      updatePauseState(room);
+      await persistRoom(roomCode);
+      io.to(roomCode).emit("player_left", { name: room.names[playerId], disconnected: true });
+      broadcastRoomState(roomCode);
+      scheduleDisconnectExpiry(roomCode, playerId);
     }
   });
 

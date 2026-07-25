@@ -240,7 +240,9 @@ export default function App() {
   }
 
   function leaveRoom() {
-    socket.disconnect();
+    if (socket.connected) {
+      socket.emit("leave_room");
+    }
     clearSession();
     setSavedSession(null);
     setScreen("lobby");
@@ -253,8 +255,11 @@ export default function App() {
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/");
     }
-    // Small delay so the server processes the disconnect before we reconnect
-    setTimeout(() => socket.connect(), 100);
+    // Small delay so the server processes the leave before we reconnect
+    setTimeout(() => {
+      socket.disconnect();
+      socket.connect();
+    }, 100);
   }
 
   function handleClearSession() {

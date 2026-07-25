@@ -277,6 +277,28 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
             >
               {isMyTurn ? "Your turn" : state.paused ? "Paused" : "Waiting"}
             </div>
+            {state.hostId === myId && !state.gameOver && (
+              <button
+                className="soft-button"
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to end this game for everyone at the table?")) {
+                    socket.emit("end_game", { roomCode });
+                  }
+                }}
+                style={{
+                  padding: "0.45rem 0.8rem",
+                  borderRadius: "999px",
+                  background: "rgba(216,139,139,0.18)",
+                  border: "1px solid rgba(216,139,139,0.35)",
+                  color: "#af6666",
+                  fontSize: "0.78rem",
+                  fontWeight: 700,
+                  cursor: "pointer"
+                }}
+              >
+                🛑 End Game
+              </button>
+            )}
             <button
               className="soft-button"
               onClick={() => {
