@@ -1,7 +1,7 @@
 export default function GameOverOverlay({ result }) {
   function playAgain() {
     localStorage.removeItem("kaari3-session");
-    sessionStorage.removeItem("kaari3-active-session");
+    window.history.replaceState(null, "", "/");
     window.location.reload();
   }
 
