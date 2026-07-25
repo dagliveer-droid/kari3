@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { socket } from "./socket";
 import Lobby from "./screens/Lobby";
 import Waiting from "./screens/Waiting";
@@ -32,11 +32,22 @@ function getRoomCodeFromPath() {
   return "";
 }
 
+function getPlayerIdFromUrl() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  return params.get("p") || "";
+}
+
 export default function App() {
   const [savedSession, setSavedSession] = useState(() => {
-    const session = loadSession();
+    let session = loadSession();
     const pathCode = getRoomCodeFromPath();
-    if (pathCode && session && session.roomCode !== pathCode) {
+    const urlPlayerId = getPlayerIdFromUrl();
+
+    if (pathCode && urlPlayerId) {
+      session = { roomCode: pathCode, playerId: urlPlayerId, name: session?.name || "" };
+      saveSession(session);
+    } else if (pathCode && session && session.roomCode !== pathCode) {
       clearSession();
       return null;
     }
@@ -53,6 +64,12 @@ export default function App() {
   });
   const [gameState, setGameState] = useState({});
   const [myHand, setMyHand] = useState([]);
+  const [connectionTrouble, setConnectionTrouble] = useState(false);
+
+  const myNameRef = useRef(myName);
+  useEffect(() => {
+    myNameRef.current = myName;
+  }, [myName]);
 
   useEffect(() => {
     const handleConnect = () => {
@@ -66,29 +83,42 @@ export default function App() {
       const session = {
         roomCode: joinedRoomCode,
         playerId,
-        name: myName,
+        name: myNameRef.current,
       };
       saveSession(session);
       setSavedSession(session);
       setMyId(playerId);
       setRoomCode(joinedRoomCode);
       setScreen("waiting");
+      setConnectionTrouble(false);
+
+      if (typeof window !== "undefined") {
+        const newUrl = `${window.location.origin}/${joinedRoomCode}?p=${playerId}`;
+        window.history.replaceState(null, "", newUrl);
+      }
     };
 
     const handleReconnected = ({ roomCode: joinedRoomCode, playerId }) => {
       const session = loadSession();
-      if (session) {
-        const nextSession = { ...session, roomCode: joinedRoomCode, playerId };
-        saveSession(nextSession);
-        setSavedSession(nextSession);
-        setMyName(nextSession.name || "");
-      }
+      const nextSession = session
+        ? { ...session, roomCode: joinedRoomCode, playerId }
+        : { roomCode: joinedRoomCode, playerId, name: myNameRef.current };
+      saveSession(nextSession);
+      setSavedSession(nextSession);
+      setMyName(nextSession.name || "");
       setMyId(playerId);
       setRoomCode(joinedRoomCode);
+      setConnectionTrouble(false);
+
+      if (typeof window !== "undefined") {
+        const newUrl = `${window.location.origin}/${joinedRoomCode}?p=${playerId}`;
+        window.history.replaceState(null, "", newUrl);
+      }
     };
 
     const handleRoomState = state => {
       setGameState(state);
+      setConnectionTrouble(false);
       setScreen(prev => {
         if (state.phase === "waiting") return "waiting";
         if (state.phase && prev !== "game") return "game";
@@ -113,6 +143,10 @@ export default function App() {
       setMyName("");
       setGameState({});
       setMyHand([]);
+      setConnectionTrouble(false);
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", "/");
+      }
     };
 
     const handleKicked = () => {
@@ -124,6 +158,10 @@ export default function App() {
       setMyName("");
       setGameState({});
       setMyHand([]);
+      setConnectionTrouble(false);
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", "/");
+      }
       alert("You have been kicked from the room.");
     };
 
@@ -136,6 +174,10 @@ export default function App() {
       setMyName("");
       setGameState({});
       setMyHand([]);
+      setConnectionTrouble(false);
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", "/");
+      }
       alert("You have been disconnected because the room was joined from another tab or window.");
     };
 
@@ -143,7 +185,7 @@ export default function App() {
     socket.on("room_created", handleJoined);
     socket.on("joined_room", handleJoined);
     const handleReconnectTempUnavailable = () => {
-      alert("Connection trouble — retrying...");
+      setConnectionTrouble(true);
       setTimeout(() => {
         const session = loadSession();
         if (session) {
@@ -161,7 +203,8 @@ export default function App() {
     socket.on("session_replaced", handleSessionReplaced);
     socket.on("reconnect_temporarily_unavailable", handleReconnectTempUnavailable);
 
-    if (savedSession) {
+    const initialSession = loadSession();
+    if (initialSession) {
       if (socket.connected) {
         handleConnect();
       } else {
@@ -182,7 +225,7 @@ export default function App() {
       socket.off("session_replaced", handleSessionReplaced);
       socket.off("reconnect_temporarily_unavailable", handleReconnectTempUnavailable);
     };
-  }, [savedSession, myName]);
+  }, []);
 
   function resumeSavedRoom() {
     if (!savedSession?.roomCode || !savedSession?.playerId) return;
@@ -220,8 +263,9 @@ export default function App() {
   const effectiveName =
     gameState.players?.find(player => player.id === myId)?.name || myName;
 
+  let screenComponent;
   if (screen === "lobby") {
-    return (
+    screenComponent = (
       <Lobby
         onNameChange={setMyName}
         savedSession={savedSession}
@@ -230,10 +274,8 @@ export default function App() {
         initialRoomCode={initialRoomCode}
       />
     );
-  }
-
-  if (screen === "waiting") {
-    return (
+  } else if (screen === "waiting") {
+    screenComponent = (
       <Waiting
         roomCode={roomCode}
         players={gameState.players || []}
@@ -242,16 +284,49 @@ export default function App() {
         onLeaveRoom={leaveRoom}
       />
     );
+  } else {
+    screenComponent = (
+      <Game
+        roomCode={roomCode}
+        myId={myId}
+        myName={effectiveName}
+        state={gameState}
+        myHand={myHand}
+        onLeaveRoom={leaveRoom}
+      />
+    );
   }
 
   return (
-    <Game
-      roomCode={roomCode}
-      myId={myId}
-      myName={effectiveName}
-      state={gameState}
-      myHand={myHand}
-      onLeaveRoom={leaveRoom}
-    />
+    <>
+      {screenComponent}
+      {connectionTrouble && (
+        <div
+          className="soft-panel fade-up"
+          style={{
+            position: "fixed",
+            top: "1rem",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "rgba(216,139,139,0.95)",
+            borderColor: "rgba(216,139,139,0.3)",
+            color: "#fff",
+            padding: "0.6rem 1.4rem",
+            borderRadius: "999px",
+            fontSize: "0.85rem",
+            fontWeight: 700,
+            boxShadow: "0 10px 30px rgba(216,139,139,0.3)",
+            pointerEvents: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem"
+          }}
+        >
+          <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "#fff", animation: "pulse 1.2s infinite ease-in-out" }} />
+          Connection trouble — retrying...
+        </div>
+      )}
+    </>
   );
 }

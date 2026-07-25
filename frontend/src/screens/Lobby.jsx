@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, initialRoomCode }) {
+export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, onClearSession, initialRoomCode }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState(initialRoomCode || "");
   const [error, setError] = useState("");
