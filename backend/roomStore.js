@@ -15,10 +15,12 @@ function createRoomStore() {
     };
   }
 
-  const pool = new Pool({
-    connectionString,
-    ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
-  });
+  const poolOptions = { connectionString };
+  if (!connectionString.includes("sslmode=")) {
+    poolOptions.ssl = process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false };
+  }
+
+  const pool = new Pool(poolOptions);
 
   pool.on("error", (err) => {
     console.error("Unexpected PG pool error:", err);

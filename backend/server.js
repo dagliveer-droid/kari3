@@ -12,13 +12,14 @@ const createRoomStore = require("./roomStore");
 
 const app = express();
 const server = http.createServer(app);
-const allowedOrigin = process.env.CLIENT_URL || "*";
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigin,
+const ioOptions = {};
+if (process.env.CLIENT_URL) {
+  ioOptions.cors = {
+    origin: process.env.CLIENT_URL,
     methods: ["GET", "POST"],
-  },
-});
+  };
+}
+const io = new Server(server, ioOptions);
 
 const PORT = process.env.PORT || 3000;
 const DISCONNECT_GRACE_MS = 10 * 60_000; // 10 minutes grace period

@@ -51,7 +51,10 @@ CORS variable is needed.
 - Build command: `npm ci --prefix backend && npm ci --prefix frontend && npm run build --prefix frontend`
 - Start command: `npm start --prefix backend`
 - Health check: `/health`
-- Region: Singapore
+- Region: Ohio (`ohio`)
+
+> [!NOTE]
+> Free Render Postgres instances expire 30 days after creation and have no backups. Free Render web services sleep after 15 minutes without traffic and take about 1 minute to wake up on cold start.
 
 Import the Blueprint from this repository in Render. It creates and wires
 `DATABASE_URL` automatically; after deploy, open `/health` and ensure it reports
