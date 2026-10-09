@@ -715,6 +715,7 @@ io.on("connection", socket => {
   }));
 
   socket.on("place_bid", safe(async ({ roomCode, bid }) => {
+    if (!Number.isInteger(bid)) return sendError(socket, "Bid must be a whole number");
     if (typeof roomCode !== "string") return;
     let room;
     try {
