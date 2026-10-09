@@ -475,14 +475,9 @@ function validatePartnerCards(cards, room) {
     return "Choose at least one partner card";
   }
 
-  const totalQty = cards.reduce((sum, card) => sum + card.quantity, 0);
-  if (totalQty !== room.config.partners) {
-    return `Total partner slots must equal ${room.config.partners}`;
-  }
-
   const seenCards = new Set();
   for (const entry of cards) {
-    if (!entry || typeof entry.card !== "string" || !Number.isInteger(entry.quantity)) {
+    if (!entry || typeof entry !== "object" || typeof entry.card !== "string" || !Number.isInteger(entry.quantity)) {
       return "Invalid partner selection";
     }
     if (!ALL_CARDS.includes(entry.card)) {
@@ -495,6 +490,11 @@ function validatePartnerCards(cards, room) {
       return `Duplicate partner card: ${entry.card}`;
     }
     seenCards.add(entry.card);
+  }
+
+  const totalQty = cards.reduce((sum, entry) => sum + entry.quantity, 0);
+  if (totalQty !== room.config.partners) {
+    return `Total partner slots must equal ${room.config.partners}`;
   }
 
   return null;
@@ -534,29 +534,46 @@ async function advanceBidder(room, roomCode) {
 }
 
 
+function safe(handler) {
+  return async (payload) => {
+    try {
+      await handler(payload || {});
+    } catch (err) {
+      console.error("handler error:", err);
+    }
+  };
+}
+
+process.on("unhandledRejection", err => console.error("unhandledRejection:", err));
+process.on("uncaughtException", err => console.error("uncaughtException:", err));
+
 io.on("connection", socket => {
   console.log("Connected:", socket.id);
 
-  socket.on("create_room", async ({ name }) => {
+  socket.on("create_room", safe(async ({ name }) => {
     if (getSession(socket.id)) {
       console.log(`create_room ignored for socket ${socket.id} (already has session)`);
       return;
     }
 
+    const sanitizedName = typeof name === "string" ? name.trim().substring(0, 20) : "";
+    const finalName = sanitizedName || "Player 1";
+
     const roomCode = await generateRoomCode();
     const playerId = generateId("p_");
     const token = crypto.randomBytes(24).toString("hex");
 
-    rooms[roomCode] = createRoomState(playerId, socket.id, name, token);
+    rooms[roomCode] = createRoomState(playerId, socket.id, finalName, token);
     await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
 
     socket.join(roomCode);
     socket.emit("room_created", { roomCode, playerId, token });
     broadcastRoomState(roomCode);
-  });
+  }));
 
-  socket.on("join_room", async ({ roomCode, name }) => {
+  socket.on("join_room", safe(async ({ roomCode, name }) => {
+    if (typeof roomCode !== "string") return sendError(socket, "Room not found");
     const existing = getSession(socket.id);
     if (existing && existing.roomCode === roomCode) {
       console.log(`Duplicate join_room ignored for socket ${socket.id} in room ${roomCode}`);
@@ -573,7 +590,8 @@ io.on("connection", socket => {
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
     if (room.players.length >= 11) return sendError(socket, "Room is full (max 11)");
 
-    const trimmedName = (name || `Player ${room.players.length + 1}`).trim();
+    const sanitizedName = typeof name === "string" ? name.trim().substring(0, 20) : "";
+    const trimmedName = sanitizedName || `Player ${room.players.length + 1}`;
     let finalName = trimmedName;
     let suffix = 2;
     const existingNames = Object.values(room.names).map(n => n.toLowerCase());
@@ -595,9 +613,13 @@ io.on("connection", socket => {
     socket.join(roomCode);
     socket.emit("joined_room", { roomCode, playerId, token });
     broadcastRoomState(roomCode);
-  });
+  }));
 
-  socket.on("reconnect_room", async ({ roomCode, playerId, token, name }) => {
+  socket.on("reconnect_room", safe(async ({ roomCode, playerId, token, name }) => {
+    if (typeof roomCode !== "string") {
+      socket.emit("reconnect_failed");
+      return;
+    }
     let room;
     try {
       room = await getRoom(roomCode);
@@ -605,7 +627,7 @@ io.on("connection", socket => {
       socket.emit("reconnect_temporarily_unavailable");
       return;
     }
-    if (!room || !playerId || !token || !room.players.includes(playerId) || !room.tokens || room.tokens[playerId] !== token) {
+    if (!room || typeof playerId !== "string" || typeof token !== "string" || !room.players.includes(playerId) || !room.tokens || room.tokens[playerId] !== token) {
       socket.emit("reconnect_failed");
       return;
     }
@@ -620,7 +642,8 @@ io.on("connection", socket => {
     }
 
     room.sockets[playerId] = socket.id;
-    if (name) room.names[playerId] = name;
+    const sanitizedName = typeof name === "string" ? name.trim().substring(0, 20) : "";
+    if (sanitizedName) room.names[playerId] = sanitizedName;
     room.disconnected.delete(playerId);
     clearDisconnectTimer(room, playerId);
     updatePauseState(room);
@@ -631,10 +654,16 @@ io.on("connection", socket => {
     socket.emit("reconnected_room", { roomCode, playerId });
     emitPrivateHand(room, playerId);
     broadcastRoomState(roomCode);
-  });
+  }));
 
-  socket.on("start_game", async ({ roomCode }) => {
-    const room = await getRoom(roomCode);
+  socket.on("start_game", safe(async ({ roomCode }) => {
+    if (typeof roomCode !== "string") return;
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode) return;
     if (room.phase !== "waiting") return sendError(socket, "Game already started");
@@ -683,10 +712,16 @@ io.on("connection", socket => {
     broadcastRoomState(roomCode);
 
     startViewingCountdown(room, roomCode);
-  });
+  }));
 
-  socket.on("place_bid", async ({ roomCode, bid }) => {
-    const room = await getRoom(roomCode);
+  socket.on("place_bid", safe(async ({ roomCode, bid }) => {
+    if (typeof roomCode !== "string") return;
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -709,10 +744,16 @@ io.on("connection", socket => {
       bid,
     });
     await advanceBidder(room, roomCode);
-  });
+  }));
 
-  socket.on("pass_bid", async ({ roomCode }) => {
-    const room = await getRoom(roomCode);
+  socket.on("pass_bid", safe(async ({ roomCode }) => {
+    if (typeof roomCode !== "string") return;
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -725,10 +766,16 @@ io.on("connection", socket => {
       name: room.names[session.playerId],
     });
     await advanceBidder(room, roomCode);
-  });
+  }));
 
-  socket.on("choose_trump", async ({ roomCode, trump }) => {
-    const room = await getRoom(roomCode);
+  socket.on("choose_trump", safe(async ({ roomCode, trump }) => {
+    if (typeof roomCode !== "string") return;
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "trump") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -752,10 +799,16 @@ io.on("connection", socket => {
       count: room.config.partners,
       decks: room.config.decks,
     });
-  });
+  }));
 
-  socket.on("choose_partners", async ({ roomCode, cards }) => {
-    const room = await getRoom(roomCode);
+  socket.on("choose_partners", safe(async ({ roomCode, cards }) => {
+    if (typeof roomCode !== "string") return;
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "partner") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -785,10 +838,16 @@ io.on("connection", socket => {
       totalPartners: room.config.partners,
     });
     broadcastRoomState(roomCode);
-  });
+  }));
 
-  socket.on("play_card", async ({ roomCode, card }) => {
-    const room = await getRoom(roomCode);
+  socket.on("play_card", safe(async ({ roomCode, card }) => {
+    if (typeof roomCode !== "string") return;
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode || room.phase !== "playing") return;
     if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
@@ -879,10 +938,17 @@ io.on("connection", socket => {
 
     await persistRoom(roomCode);
     broadcastRoomState(roomCode);
-  });
+  }));
 
-  socket.on("transfer_host", async ({ roomCode, targetPlayerId }) => {
-    const room = await getRoom(roomCode);
+  socket.on("transfer_host", safe(async ({ roomCode, targetPlayerId }) => {
+    if (typeof roomCode !== "string") return;
+    if (typeof targetPlayerId !== "string") return sendError(socket, "Target player not found");
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode) return;
     if (room.hostId !== session.playerId) return sendError(socket, "Only host can transfer host rights");
@@ -891,20 +957,33 @@ io.on("connection", socket => {
     room.hostId = targetPlayerId;
     await persistRoom(roomCode);
     broadcastRoomState(roomCode);
-  });
+  }));
 
-  socket.on("end_game", async ({ roomCode }) => {
-    const room = await getRoom(roomCode);
+  socket.on("end_game", safe(async ({ roomCode }) => {
+    if (typeof roomCode !== "string") return;
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode) return;
     if (room.hostId !== session.playerId) return sendError(socket, "Only the host can end the game");
     if (room.phase === "waiting" || room.phase === "gameover") return;
 
     await endGame(room, roomCode, `Game ended by host (${room.names[room.hostId] || "Host"}).`, false);
-  });
+  }));
 
-  socket.on("kick_player", async ({ roomCode, targetPlayerId }) => {
-    const room = await getRoom(roomCode);
+  socket.on("kick_player", safe(async ({ roomCode, targetPlayerId }) => {
+    if (typeof roomCode !== "string") return;
+    if (typeof targetPlayerId !== "string") return sendError(socket, "Target player not found");
+    let room;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      return sendError(socket, "Server is temporarily unavailable. Please try again.");
+    }
     const session = getSession(socket.id);
     if (!room || !session || session.roomCode !== roomCode) return;
     if (room.hostId !== session.playerId) return sendError(socket, "Only host can kick players");
@@ -922,9 +1001,9 @@ io.on("connection", socket => {
       }
       await removeWaitingPlayer(roomCode, targetPlayerId);
     }
-  });
+  }));
 
-  socket.on("leave_room", async () => {
+  socket.on("leave_room", safe(async () => {
     const session = getSession(socket.id);
     if (!session) return;
     const { roomCode, playerId } = session;
@@ -954,9 +1033,9 @@ io.on("connection", socket => {
       broadcastRoomState(roomCode);
       scheduleDisconnectExpiry(roomCode, playerId);
     }
-  });
+  }));
 
-  socket.on("disconnect", async () => {
+  socket.on("disconnect", safe(async () => {
     console.log("Disconnected:", socket.id);
     const session = getSession(socket.id);
     delete socketSessions[socket.id];
@@ -987,7 +1066,7 @@ io.on("connection", socket => {
     io.to(roomCode).emit("player_left", { name: room.names[playerId], disconnected: true });
     broadcastRoomState(roomCode);
     scheduleDisconnectExpiry(roomCode, playerId);
-  });
+  }));
 });
 
 async function boot() {
