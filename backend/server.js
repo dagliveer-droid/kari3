@@ -45,12 +45,13 @@ function createPauseReason(room, fallback = "Waiting for players to reconnect") 
   return `Waiting for ${disconnectedPlayers.map(id => room.names[id]).join(", ")} to reconnect`;
 }
 
-function createRoomState(hostPlayerId, hostSocketId, hostName) {
+function createRoomState(hostPlayerId, hostSocketId, hostName, hostToken) {
   return {
     players: [hostPlayerId],
     hostId: hostPlayerId,
     names: { [hostPlayerId]: hostName || "Player 1" },
     sockets: { [hostPlayerId]: hostSocketId },
+    tokens: hostToken ? { [hostPlayerId]: hostToken } : {},
     hands: {},
     phase: "waiting",
     currentBidder: null,
@@ -83,6 +84,7 @@ function serializeRoom(room) {
     players: room.players,
     hostId: room.hostId,
     names: room.names,
+    tokens: room.tokens || {},
     hands: room.hands,
     phase: room.phase,
     currentBidder: room.currentBidder,
@@ -114,6 +116,7 @@ function hydrateRoom(snapshot) {
     players: snapshot.players || [],
     hostId: snapshot.hostId || snapshot.players?.[0] || null,
     names: snapshot.names || {},
+    tokens: snapshot.tokens || {},
     sockets: {},
     hands: snapshot.hands || {},
     phase: snapshot.phase || "waiting",
@@ -446,6 +449,7 @@ async function removeWaitingPlayer(roomCode, playerId) {
   room.players = room.players.filter(id => id !== playerId);
   delete room.names[playerId];
   delete room.sockets[playerId];
+  if (room.tokens) delete room.tokens[playerId];
   delete room.hands[playerId];
   delete room.scores[playerId];
   room.passedPlayers.delete(playerId);
@@ -541,13 +545,14 @@ io.on("connection", socket => {
 
     const roomCode = await generateRoomCode();
     const playerId = generateId("p_");
+    const token = crypto.randomBytes(24).toString("hex");
 
-    rooms[roomCode] = createRoomState(playerId, socket.id, name);
+    rooms[roomCode] = createRoomState(playerId, socket.id, name, token);
     await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
 
     socket.join(roomCode);
-    socket.emit("room_created", { roomCode, playerId });
+    socket.emit("room_created", { roomCode, playerId, token });
     broadcastRoomState(roomCode);
   });
 
@@ -578,6 +583,9 @@ io.on("connection", socket => {
     }
 
     const playerId = generateId("p_");
+    const token = crypto.randomBytes(24).toString("hex");
+    if (!room.tokens) room.tokens = {};
+    room.tokens[playerId] = token;
     room.players.push(playerId);
     room.names[playerId] = finalName;
     room.sockets[playerId] = socket.id;
@@ -585,11 +593,11 @@ io.on("connection", socket => {
     await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
     socket.join(roomCode);
-    socket.emit("joined_room", { roomCode, playerId });
+    socket.emit("joined_room", { roomCode, playerId, token });
     broadcastRoomState(roomCode);
   });
 
-  socket.on("reconnect_room", async ({ roomCode, playerId, name }) => {
+  socket.on("reconnect_room", async ({ roomCode, playerId, token, name }) => {
     let room;
     try {
       room = await getRoom(roomCode);
@@ -597,7 +605,7 @@ io.on("connection", socket => {
       socket.emit("reconnect_temporarily_unavailable");
       return;
     }
-    if (!room || !playerId || !room.players.includes(playerId)) {
+    if (!room || !playerId || !token || !room.players.includes(playerId) || !room.tokens || room.tokens[playerId] !== token) {
       socket.emit("reconnect_failed");
       return;
     }

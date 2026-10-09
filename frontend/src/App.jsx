@@ -32,22 +32,12 @@ function getRoomCodeFromPath() {
   return "";
 }
 
-function getPlayerIdFromUrl() {
-  if (typeof window === "undefined") return "";
-  const params = new URLSearchParams(window.location.search);
-  return params.get("p") || "";
-}
-
 export default function App() {
   const [savedSession, setSavedSession] = useState(() => {
-    let session = loadSession();
+    const session = loadSession();
     const pathCode = getRoomCodeFromPath();
-    const urlPlayerId = getPlayerIdFromUrl();
 
-    if (pathCode && urlPlayerId) {
-      session = { roomCode: pathCode, playerId: urlPlayerId, name: session?.name || "" };
-      saveSession(session);
-    } else if (pathCode && session && session.roomCode !== pathCode) {
+    if (pathCode && session && session.roomCode !== pathCode) {
       clearSession();
       return null;
     }
@@ -74,15 +64,16 @@ export default function App() {
   useEffect(() => {
     const handleConnect = () => {
       const session = loadSession();
-      if (session?.roomCode && session?.playerId) {
+      if (session?.roomCode && session?.playerId && session?.token) {
         socket.emit("reconnect_room", session);
       }
     };
 
-    const handleJoined = ({ roomCode: joinedRoomCode, playerId }) => {
+    const handleJoined = ({ roomCode: joinedRoomCode, playerId, token }) => {
       const session = {
         roomCode: joinedRoomCode,
         playerId,
+        token,
         name: myNameRef.current,
       };
       saveSession(session);
@@ -93,7 +84,7 @@ export default function App() {
       setConnectionTrouble(false);
 
       if (typeof window !== "undefined") {
-        const newUrl = `${window.location.origin}/${joinedRoomCode}?p=${playerId}`;
+        const newUrl = `${window.location.origin}/${joinedRoomCode}`;
         window.history.replaceState(null, "", newUrl);
       }
     };
@@ -111,7 +102,7 @@ export default function App() {
       setConnectionTrouble(false);
 
       if (typeof window !== "undefined") {
-        const newUrl = `${window.location.origin}/${joinedRoomCode}?p=${playerId}`;
+        const newUrl = `${window.location.origin}/${joinedRoomCode}`;
         window.history.replaceState(null, "", newUrl);
       }
     };
@@ -228,7 +219,7 @@ export default function App() {
   }, []);
 
   function resumeSavedRoom() {
-    if (!savedSession?.roomCode || !savedSession?.playerId) return;
+    if (!savedSession?.roomCode || !savedSession?.playerId || !savedSession?.token) return;
     setMyId(savedSession.playerId);
     setMyName(savedSession.name || "");
     setRoomCode(savedSession.roomCode);
