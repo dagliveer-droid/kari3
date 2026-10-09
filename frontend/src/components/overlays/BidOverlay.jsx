@@ -7,21 +7,27 @@ export default function BidOverlay({ state, roomCode, myId }) {
   const minBid = (state.highestBid || 0) + 5;
   const maxBid = state.config?.totalPoints || 250;
   const [bidValue, setBidValue] = useState(minBid);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     setBidValue(minBid);
-  }, [minBid]);
+    setSubmitting(false);
+  }, [minBid, state]);
 
   const bidderName = state.players?.find(player => player.id === state.currentBidder)?.name || "...";
   const highBidderName = state.players?.find(player => player.id === state.highestBidder)?.name;
 
   function placeBid() {
+    if (submitting) return;
+    setSubmitting(true);
     initAudio();
     playUiSound("bid");
     socket.emit("place_bid", { roomCode, bid: bidValue });
   }
 
   function passBid() {
+    if (submitting) return;
+    setSubmitting(true);
     initAudio();
     socket.emit("pass_bid", { roomCode });
   }
@@ -81,14 +87,14 @@ export default function BidOverlay({ state, roomCode, myId }) {
               gap: "0.35rem",
             }}
           >
-            <button style={ctrlBtn} onClick={() => setBidValue(value => Math.max(minBid, value - 5))}>-5</button>
+            <button style={{ ...ctrlBtn, opacity: submitting ? 0.6 : 1, cursor: submitting ? "not-allowed" : "pointer" }} disabled={submitting} onClick={() => setBidValue(value => Math.max(minBid, value - 5))}>-5</button>
             <span style={{ minWidth: "60px", textAlign: "center", fontWeight: 800, color: "var(--text)" }}>{bidValue}</span>
-            <button style={ctrlBtn} onClick={() => setBidValue(value => Math.min(maxBid, value + 5))}>+5</button>
+            <button style={{ ...ctrlBtn, opacity: submitting ? 0.6 : 1, cursor: submitting ? "not-allowed" : "pointer" }} disabled={submitting} onClick={() => setBidValue(value => Math.min(maxBid, value + 5))}>+5</button>
           </div>
-          <button className="soft-button" style={{ background: "linear-gradient(135deg, #e6a590, #d88f7a)", color: "white" }} onClick={placeBid}>
+          <button className="soft-button" disabled={submitting} style={{ background: submitting ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)", color: submitting ? "var(--muted)" : "white", cursor: submitting ? "not-allowed" : "pointer" }} onClick={placeBid}>
             Bid {bidValue}
           </button>
-          <button className="soft-button" style={{ background: "rgba(255,255,255,0.72)", color: "var(--text)", borderColor: "rgba(117,96,84,0.12)" }} onClick={passBid}>
+          <button className="soft-button" disabled={submitting} style={{ background: "rgba(255,255,255,0.72)", color: "var(--text)", borderColor: "rgba(117,96,84,0.12)", cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? 0.6 : 1 }} onClick={passBid}>
             Pass
           </button>
         </div>

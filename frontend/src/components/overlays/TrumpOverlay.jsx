@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { socket } from "../../socket";
 import { initAudio, playUiSound } from "../../audio";
 
@@ -10,7 +11,11 @@ const OPTIONS = [
 ];
 
 export default function TrumpOverlay({ roomCode }) {
+  const [submitting, setSubmitting] = useState(false);
+
   function chooseTrump(trump) {
+    if (submitting) return;
+    setSubmitting(true);
     initAudio();
     playUiSound("trump");
     socket.emit("choose_trump", { roomCode, trump });
@@ -39,6 +44,7 @@ export default function TrumpOverlay({ roomCode }) {
             <button
               key={option.key}
               className="soft-button"
+              disabled={submitting}
               onClick={() => chooseTrump(option.key)}
               style={{
                 background: option.bg,
@@ -49,6 +55,8 @@ export default function TrumpOverlay({ roomCode }) {
                 placeItems: "center",
                 gap: "0.2rem",
                 gridColumn: option.full ? "1 / -1" : "auto",
+                opacity: submitting ? 0.6 : 1,
+                cursor: submitting ? "not-allowed" : "pointer",
               }}
             >
               <span style={{ fontSize: "2rem", lineHeight: 1 }}>{option.icon}</span>

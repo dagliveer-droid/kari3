@@ -95,9 +95,17 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
     };
   }, []);
 
+  const [isPlayingCard, setIsPlayingCard] = useState(false);
+
+  useEffect(() => {
+    setIsPlayingCard(false);
+  }, [state]);
+
   function handleCardClick(card, idx) {
+    if (isPlayingCard || !isMyTurn) return;
     initAudio();
     if (selectedCard === card && selectedCardIdx === idx) {
+      setIsPlayingCard(true);
       socket.emit("play_card", { roomCode, card });
       setSelectedCard(null);
       setSelectedCardIdx(null);
@@ -475,7 +483,7 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
                   key={`${card}-${index}`}
                   card={card}
                   selected={isSelectedCardValid && selectedCard === card && selectedCardIdx === index}
-                  disabled={!isMyTurn}
+                  disabled={!isMyTurn || isPlayingCard}
                   onClick={() => handleCardClick(card, index)}
                 />
               ))}

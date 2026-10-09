@@ -6,9 +6,11 @@ import { initAudio, playUiSound } from "../../audio";
 
 export default function PartnerOverlay({ roomCode, partnerCount, maxDecks }) {
   const [selections, setSelections] = useState({});
+  const [submitting, setSubmitting] = useState(false);
   const totalSelected = Object.values(selections).reduce((sum, quantity) => sum + quantity, 0);
 
   function updateQty(card, delta) {
+    if (submitting) return;
     const current = selections[card] || 0;
     const newQty = current + delta;
     if (newQty < 0) return;
@@ -24,7 +26,8 @@ export default function PartnerOverlay({ roomCode, partnerCount, maxDecks }) {
   }
 
   function confirm() {
-    if (totalSelected !== partnerCount) return;
+    if (submitting || totalSelected !== partnerCount) return;
+    setSubmitting(true);
     initAudio();
     playUiSound("partner");
     const cards = Object.entries(selections).map(([card, quantity]) => ({ card, quantity }));
@@ -112,13 +115,13 @@ export default function PartnerOverlay({ roomCode, partnerCount, maxDecks }) {
           <button
             className="soft-button"
             onClick={confirm}
-            disabled={totalSelected !== partnerCount}
+            disabled={submitting || totalSelected !== partnerCount}
             style={{
               minWidth: "220px",
-              background: totalSelected !== partnerCount ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)",
-              color: totalSelected !== partnerCount ? "var(--muted)" : "white",
-              cursor: totalSelected !== partnerCount ? "not-allowed" : "pointer",
-              opacity: totalSelected !== partnerCount ? 0.7 : 1,
+              background: (submitting || totalSelected !== partnerCount) ? "rgba(138,118,107,0.18)" : "linear-gradient(135deg, #e6a590, #d88f7a)",
+              color: (submitting || totalSelected !== partnerCount) ? "var(--muted)" : "white",
+              cursor: (submitting || totalSelected !== partnerCount) ? "not-allowed" : "pointer",
+              opacity: (submitting || totalSelected !== partnerCount) ? 0.7 : 1,
             }}
           >
             Confirm Partners

@@ -534,6 +534,28 @@ async function advanceBidder(room, roomCode) {
 }
 
 
+const roomLocks = {};
+
+function withRoomLock(roomCode, fn) {
+  if (!roomCode || typeof roomCode !== "string") {
+    return fn();
+  }
+  const previousLock = roomLocks[roomCode] || Promise.resolve();
+  const nextLock = previousLock
+    .then(() => fn())
+    .catch(err => {
+      console.error(`Error in room lock for ${roomCode}:`, err);
+    })
+    .finally(() => {
+      if (roomLocks[roomCode] === nextLock) {
+        delete roomLocks[roomCode];
+      }
+    });
+
+  roomLocks[roomCode] = nextLock;
+  return nextLock;
+}
+
 function safe(handler) {
   return async (payload) => {
     try {
@@ -658,350 +680,368 @@ io.on("connection", socket => {
 
   socket.on("start_game", safe(async ({ roomCode }) => {
     if (typeof roomCode !== "string") return;
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode) return;
-    if (room.phase !== "waiting") return sendError(socket, "Game already started");
-    if (room.hostId !== session.playerId) return sendError(socket, "Only host can start");
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
+      }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode) return;
+      if (room.phase !== "waiting") return sendError(socket, "Game already started");
+      if (room.hostId !== session.playerId) return sendError(socket, "Only host can start");
 
-    // Prune any disconnected players before starting
-    const disconnectedList = Array.from(room.disconnected);
-    for (const pid of disconnectedList) {
-      await removeWaitingPlayer(roomCode, pid);
-    }
+      // Prune any disconnected players before starting
+      const disconnectedList = Array.from(room.disconnected);
+      for (const pid of disconnectedList) {
+        await removeWaitingPlayer(roomCode, pid);
+      }
 
-    if (room.players.length < 5) return sendError(socket, "Need at least 5 connected players to start");
+      if (room.players.length < 5) return sendError(socket, "Need at least 5 connected players to start");
 
-    room.config = createGameConfig(room.players.length);
-    const hands = dealCards(room.players.length, room.config.decks);
+      room.config = createGameConfig(room.players.length);
+      const hands = dealCards(room.players.length, room.config.decks);
 
-    room.players.forEach((playerId, index) => {
-      room.hands[playerId] = hands[`player${index + 1}`];
-      room.scores[playerId] = 0;
-      room.disconnected.delete(playerId);
-      clearDisconnectTimer(room, playerId);
+      room.players.forEach((playerId, index) => {
+        room.hands[playerId] = hands[`player${index + 1}`];
+        room.scores[playerId] = 0;
+        room.disconnected.delete(playerId);
+        clearDisconnectTimer(room, playerId);
+      });
+
+      room.highestBid = room.config.minBid - 5;
+      room.highestBidder = null;
+      room.currentBidder = room.players[0];
+      room.partnerCardTracker = {};
+      room.revealedPartnerCards = {};
+      room.trump = null;
+      room.trick = [];
+      room.leadSuit = null;
+      room.leaderIndex = 0;
+      room.teamScores = { bidTeam: 0, oppTeam: 0 };
+      room.bidTeam = [];
+      room.revealedPartners = [];
+      room.passedPlayers = new Set();
+      room.phase = "viewing";
+      room.gameOver = false;
+      room.gameResult = null;
+      room.paused = false;
+      room.pauseReason = null;
+      room.viewingCountdown = 15;
+
+      await persistRoom(roomCode);
+      sendHands(room);
+      broadcastRoomState(roomCode);
+
+      startViewingCountdown(room, roomCode);
     });
-
-    room.highestBid = room.config.minBid - 5;
-    room.highestBidder = null;
-    room.currentBidder = room.players[0];
-    room.partnerCardTracker = {};
-    room.revealedPartnerCards = {};
-    room.trump = null;
-    room.trick = [];
-    room.leadSuit = null;
-    room.leaderIndex = 0;
-    room.teamScores = { bidTeam: 0, oppTeam: 0 };
-    room.bidTeam = [];
-    room.revealedPartners = [];
-    room.passedPlayers = new Set();
-    room.phase = "viewing";
-    room.gameOver = false;
-    room.gameResult = null;
-    room.paused = false;
-    room.pauseReason = null;
-    room.viewingCountdown = 15;
-
-    await persistRoom(roomCode);
-    sendHands(room);
-    broadcastRoomState(roomCode);
-
-    startViewingCountdown(room, roomCode);
   }));
 
   socket.on("place_bid", safe(async ({ roomCode, bid }) => {
     if (!Number.isInteger(bid)) return sendError(socket, "Bid must be a whole number");
     if (typeof roomCode !== "string") return;
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
-    if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
-    if (room.currentBidder !== session.playerId) return;
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
+      }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
+      if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
+      if (room.currentBidder !== session.playerId) return;
 
-    const minNext = room.highestBid + 5;
-    if (bid < minNext || bid > room.config.totalPoints) {
-      return sendError(socket, `Bid must be between ${minNext} and ${room.config.totalPoints}`);
-    }
-    if (bid % 5 !== 0) {
-      return sendError(socket, "Bid must be a multiple of 5");
-    }
+      const minNext = room.highestBid + 5;
+      if (bid < minNext || bid > room.config.totalPoints) {
+        return sendError(socket, `Bid must be between ${minNext} and ${room.config.totalPoints}`);
+      }
+      if (bid % 5 !== 0) {
+        return sendError(socket, "Bid must be a multiple of 5");
+      }
 
-    room.highestBid = bid;
-    room.highestBidder = session.playerId;
-    await persistRoom(roomCode);
-    io.to(roomCode).emit("bid_placed", {
-      player: session.playerId,
-      name: room.names[session.playerId],
-      bid,
+      room.highestBid = bid;
+      room.highestBidder = session.playerId;
+      await persistRoom(roomCode);
+      io.to(roomCode).emit("bid_placed", {
+        player: session.playerId,
+        name: room.names[session.playerId],
+        bid,
+      });
+      await advanceBidder(room, roomCode);
     });
-    await advanceBidder(room, roomCode);
   }));
 
   socket.on("pass_bid", safe(async ({ roomCode }) => {
     if (typeof roomCode !== "string") return;
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
-    if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
-    if (room.currentBidder !== session.playerId) return;
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
+      }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode || room.phase !== "bidding") return;
+      if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
+      if (room.currentBidder !== session.playerId) return;
 
-    room.passedPlayers.add(session.playerId);
-    await persistRoom(roomCode);
-    io.to(roomCode).emit("bid_passed", {
-      player: session.playerId,
-      name: room.names[session.playerId],
+      room.passedPlayers.add(session.playerId);
+      await persistRoom(roomCode);
+      io.to(roomCode).emit("bid_passed", {
+        player: session.playerId,
+        name: room.names[session.playerId],
+      });
+      await advanceBidder(room, roomCode);
     });
-    await advanceBidder(room, roomCode);
   }));
 
   socket.on("choose_trump", safe(async ({ roomCode, trump }) => {
     if (typeof roomCode !== "string") return;
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode || room.phase !== "trump") return;
-    if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
-    if (session.playerId !== room.highestBidder) return;
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
+      }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode || room.phase !== "trump") return;
+      if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
+      if (session.playerId !== room.highestBidder) return;
 
-    const validTrump = ["SPADES", "HEARTS", "CLUBS", "DIAMONDS", "NONE"];
-    if (!validTrump.includes(trump)) return sendError(socket, "Invalid trump choice");
+      const validTrump = ["SPADES", "HEARTS", "CLUBS", "DIAMONDS", "NONE"];
+      if (!validTrump.includes(trump)) return sendError(socket, "Invalid trump choice");
 
-    room.trump = trump === "NONE" ? null : trump;
-    room.phase = "partner";
-    room.partnerCardTracker = {};
+      room.trump = trump === "NONE" ? null : trump;
+      room.phase = "partner";
+      room.partnerCardTracker = {};
 
-    await persistRoom(roomCode);
-    io.to(roomCode).emit("trump_chosen", {
-      trump: room.trump,
-      name: room.names[session.playerId],
-    });
-    broadcastRoomState(roomCode);
+      await persistRoom(roomCode);
+      io.to(roomCode).emit("trump_chosen", {
+        trump: room.trump,
+        name: room.names[session.playerId],
+      });
+      broadcastRoomState(roomCode);
 
-    socket.emit("select_partners", {
-      count: room.config.partners,
-      decks: room.config.decks,
+      socket.emit("select_partners", {
+        count: room.config.partners,
+        decks: room.config.decks,
+      });
     });
   }));
 
   socket.on("choose_partners", safe(async ({ roomCode, cards }) => {
     if (typeof roomCode !== "string") return;
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode || room.phase !== "partner") return;
-    if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
-    if (session.playerId !== room.highestBidder) return;
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
+      }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode || room.phase !== "partner") return;
+      if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
+      if (session.playerId !== room.highestBidder) return;
 
-    const partnerError = validatePartnerCards(cards, room);
-    if (partnerError) return sendError(socket, partnerError);
+      const partnerError = validatePartnerCards(cards, room);
+      if (partnerError) return sendError(socket, partnerError);
 
-    room.partnerCardTracker = {};
-    room.revealedPartnerCards = {};
-    cards.forEach(({ card, quantity }) => {
-      room.partnerCardTracker[card] = { needed: quantity, revealed: 0 };
+      room.partnerCardTracker = {};
+      room.revealedPartnerCards = {};
+      cards.forEach(({ card, quantity }) => {
+        room.partnerCardTracker[card] = { needed: quantity, revealed: 0 };
+      });
+
+      room.bidTeam = [room.highestBidder];
+      room.revealedPartners = [];
+      room.phase = "playing";
+      room.leaderIndex = room.players.indexOf(room.highestBidder);
+      room.trick = [];
+      room.leadSuit = null;
+      room.teamScores = { bidTeam: 0, oppTeam: 0 };
+
+      await persistRoom(roomCode);
+      io.to(roomCode).emit("partners_set", {
+        partnerCards: cards,
+        bidderName: room.names[room.highestBidder],
+        totalPartners: room.config.partners,
+      });
+      broadcastRoomState(roomCode);
     });
-
-    room.bidTeam = [room.highestBidder];
-    room.revealedPartners = [];
-    room.phase = "playing";
-    room.leaderIndex = room.players.indexOf(room.highestBidder);
-    room.trick = [];
-    room.leadSuit = null;
-    room.teamScores = { bidTeam: 0, oppTeam: 0 };
-
-    await persistRoom(roomCode);
-    io.to(roomCode).emit("partners_set", {
-      partnerCards: cards,
-      bidderName: room.names[room.highestBidder],
-      totalPartners: room.config.partners,
-    });
-    broadcastRoomState(roomCode);
   }));
 
   socket.on("play_card", safe(async ({ roomCode, card }) => {
     if (typeof roomCode !== "string") return;
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode || room.phase !== "playing") return;
-    if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
-
-    const playerId = session.playerId;
-    const playerIndex = room.players.indexOf(playerId);
-    if (playerIndex === -1) return;
-
-    const expectedIndex = (room.leaderIndex + room.trick.length) % room.players.length;
-    if (playerIndex !== expectedIndex) {
-      return sendError(socket, "Not your turn");
-    }
-
-    const hand = room.hands[playerId];
-    if (!Array.isArray(hand)) return sendError(socket, "Hand not found");
-    if (typeof card !== "string" || !card.includes("_")) return sendError(socket, "Malformed card code");
-
-    const leadSuit = room.trick.length === 0 ? null : room.leadSuit;
-    if (!canPlayCard(hand, card, leadSuit)) {
-      return sendError(socket, "You must follow the lead suit");
-    }
-
-    if (room.trick.length === 0) {
-      room.leadSuit = card.split("_")[0];
-    }
-
-    const cardIndex = hand.indexOf(card);
-    hand.splice(cardIndex, 1);
-    emitPrivateHand(room, playerId);
-
-    const tracker = room.partnerCardTracker[card];
-    if (tracker && tracker.revealed < tracker.needed) {
-      tracker.revealed += 1;
-      if (!room.revealedPartners.includes(playerId)) {
-        room.revealedPartners.push(playerId);
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
       }
-      room.revealedPartnerCards[playerId] = card;
-      if (!room.bidTeam.includes(playerId)) {
-        room.bidTeam.push(playerId);
-      }
-      recalculateTeamScores(room);
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode || room.phase !== "playing") return;
+      if (room.paused) return sendError(socket, room.pauseReason || "Game is paused");
 
-      io.to(roomCode).emit("partner_revealed", {
+      const playerId = session.playerId;
+      const playerIndex = room.players.indexOf(playerId);
+      if (playerIndex === -1) return;
+
+      const expectedIndex = (room.leaderIndex + room.trick.length) % room.players.length;
+      if (playerIndex !== expectedIndex) {
+        return sendError(socket, "Not your turn");
+      }
+
+      const hand = room.hands[playerId];
+      if (!Array.isArray(hand)) return sendError(socket, "Hand not found");
+      if (typeof card !== "string" || !card.includes("_")) return sendError(socket, "Malformed card code");
+
+      const leadSuit = room.trick.length === 0 ? null : room.leadSuit;
+      if (!canPlayCard(hand, card, leadSuit)) {
+        return sendError(socket, "You must follow the lead suit");
+      }
+
+      if (room.trick.length === 0) {
+        room.leadSuit = card.split("_")[0];
+      }
+
+      const cardIndex = hand.indexOf(card);
+      hand.splice(cardIndex, 1);
+      emitPrivateHand(room, playerId);
+
+      const tracker = room.partnerCardTracker[card];
+      if (tracker && tracker.revealed < tracker.needed) {
+        tracker.revealed += 1;
+        if (!room.revealedPartners.includes(playerId)) {
+          room.revealedPartners.push(playerId);
+        }
+        room.revealedPartnerCards[playerId] = card;
+        if (!room.bidTeam.includes(playerId)) {
+          room.bidTeam.push(playerId);
+        }
+        recalculateTeamScores(room);
+
+        io.to(roomCode).emit("partner_revealed", {
+          player: playerId,
+          name: room.names[playerId],
+          card,
+          revealedSoFar: tracker.revealed,
+          totalNeeded: tracker.needed,
+          allPartnersRevealed: Object.values(room.partnerCardTracker).every(entry => entry.revealed >= entry.needed),
+        });
+      }
+
+      room.trick.push({ player: playerId, card, playerIndex });
+      io.to(roomCode).emit("card_played", {
         player: playerId,
         name: room.names[playerId],
         card,
-        revealedSoFar: tracker.revealed,
-        totalNeeded: tracker.needed,
-        allPartnersRevealed: Object.values(room.partnerCardTracker).every(entry => entry.revealed >= entry.needed),
-      });
-    }
-
-    room.trick.push({ player: playerId, card, playerIndex });
-    io.to(roomCode).emit("card_played", {
-      player: playerId,
-      name: room.names[playerId],
-      card,
-      trick: room.trick,
-    });
-
-    if (room.trick.length === room.players.length) {
-      const winner = resolveTrick(room.trick, room.leadSuit, room.trump);
-      const points = trickPoints(room.trick);
-
-      room.scores[winner.player] = (room.scores[winner.player] || 0) + points;
-      recalculateTeamScores(room);
-
-      room.leaderIndex = winner.playerIndex;
-
-      io.to(roomCode).emit("trick_resolved", {
-        winner: winner.player,
-        winnerName: room.names[winner.player],
-        winningCard: winner.card,
-        points,
-        teamScores: room.teamScores,
+        trick: room.trick,
       });
 
-      room.trick = [];
-      room.leadSuit = null;
-      sendHands(room);
+      if (room.trick.length === room.players.length) {
+        const winner = resolveTrick(room.trick, room.leadSuit, room.trump);
+        const points = trickPoints(room.trick);
 
-      const anyCardsLeft = Object.values(room.hands).some(playerHand => playerHand.length > 0);
-      if (!anyCardsLeft) {
-        await endGame(room, roomCode);
-        return;
+        room.scores[winner.player] = (room.scores[winner.player] || 0) + points;
+        recalculateTeamScores(room);
+
+        room.leaderIndex = winner.playerIndex;
+
+        io.to(roomCode).emit("trick_resolved", {
+          winner: winner.player,
+          winnerName: room.names[winner.player],
+          winningCard: winner.card,
+          points,
+          teamScores: room.teamScores,
+        });
+
+        room.trick = [];
+        room.leadSuit = null;
+        sendHands(room);
+
+        const anyCardsLeft = Object.values(room.hands).some(playerHand => playerHand.length > 0);
+        if (!anyCardsLeft) {
+          await endGame(room, roomCode);
+          return;
+        }
       }
-    }
 
-    await persistRoom(roomCode);
-    broadcastRoomState(roomCode);
+      await persistRoom(roomCode);
+      broadcastRoomState(roomCode);
+    });
   }));
 
   socket.on("transfer_host", safe(async ({ roomCode, targetPlayerId }) => {
     if (typeof roomCode !== "string") return;
     if (typeof targetPlayerId !== "string") return sendError(socket, "Target player not found");
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode) return;
-    if (room.hostId !== session.playerId) return sendError(socket, "Only host can transfer host rights");
-    if (!room.players.includes(targetPlayerId)) return sendError(socket, "Target player not found");
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
+      }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode) return;
+      if (room.hostId !== session.playerId) return sendError(socket, "Only host can transfer host rights");
+      if (!room.players.includes(targetPlayerId)) return sendError(socket, "Target player not found");
 
-    room.hostId = targetPlayerId;
-    await persistRoom(roomCode);
-    broadcastRoomState(roomCode);
+      room.hostId = targetPlayerId;
+      await persistRoom(roomCode);
+      broadcastRoomState(roomCode);
+    });
   }));
 
   socket.on("end_game", safe(async ({ roomCode }) => {
     if (typeof roomCode !== "string") return;
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode) return;
-    if (room.hostId !== session.playerId) return sendError(socket, "Only the host can end the game");
-    if (room.phase === "waiting" || room.phase === "gameover") return;
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
+      }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode) return;
+      if (room.hostId !== session.playerId) return sendError(socket, "Only the host can end the game");
+      if (room.phase === "waiting" || room.phase === "gameover") return;
 
-    await endGame(room, roomCode, `Game ended by host (${room.names[room.hostId] || "Host"}).`, false);
+      await endGame(room, roomCode, `Game ended by host (${room.names[room.hostId] || "Host"}).`, false);
+    });
   }));
 
   socket.on("kick_player", safe(async ({ roomCode, targetPlayerId }) => {
     if (typeof roomCode !== "string") return;
     if (typeof targetPlayerId !== "string") return sendError(socket, "Target player not found");
-    let room;
-    try {
-      room = await getRoom(roomCode);
-    } catch (err) {
-      return sendError(socket, "Server is temporarily unavailable. Please try again.");
-    }
-    const session = getSession(socket.id);
-    if (!room || !session || session.roomCode !== roomCode) return;
-    if (room.hostId !== session.playerId) return sendError(socket, "Only host can kick players");
-    if (targetPlayerId === room.hostId) return sendError(socket, "Host cannot kick themselves");
-    if (!room.players.includes(targetPlayerId)) return sendError(socket, "Target player not found");
-
-    if (room.phase === "waiting") {
-      const targetSocketId = room.sockets[targetPlayerId];
-      if (targetSocketId) {
-        const targetSocket = io.sockets.sockets.get(targetSocketId);
-        if (targetSocket) {
-          targetSocket.emit("kicked");
-          targetSocket.leave(roomCode);
-        }
+    return withRoomLock(roomCode, async () => {
+      let room;
+      try {
+        room = await getRoom(roomCode);
+      } catch (err) {
+        return sendError(socket, "Server is temporarily unavailable. Please try again.");
       }
-      await removeWaitingPlayer(roomCode, targetPlayerId);
-    }
+      const session = getSession(socket.id);
+      if (!room || !session || session.roomCode !== roomCode) return;
+      if (room.hostId !== session.playerId) return sendError(socket, "Only host can kick players");
+      if (targetPlayerId === room.hostId) return sendError(socket, "Host cannot kick themselves");
+      if (!room.players.includes(targetPlayerId)) return sendError(socket, "Target player not found");
+
+      if (room.phase === "waiting") {
+        const targetSocketId = room.sockets[targetPlayerId];
+        if (targetSocketId) {
+          const targetSocket = io.sockets.sockets.get(targetSocketId);
+          if (targetSocket) {
+            targetSocket.emit("kicked");
+            targetSocket.leave(roomCode);
+          }
+        }
+        await removeWaitingPlayer(roomCode, targetPlayerId);
+      }
+    });
   }));
 
   socket.on("leave_room", safe(async () => {
