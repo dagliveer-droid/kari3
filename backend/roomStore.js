@@ -5,6 +5,7 @@ function createRoomStore() {
   if (!connectionString) {
     return {
       enabled: false,
+      ready: false,
       async init() {},
       async get() { return null; },
       async has() { return false; },
@@ -23,6 +24,7 @@ function createRoomStore() {
   });
 
   let initPromise;
+  let isReady = false;
 
   function init() {
     if (!initPromise) {
@@ -32,13 +34,21 @@ function createRoomStore() {
           state JSONB NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
-      `);
+      `).then((res) => {
+        isReady = true;
+        return res;
+      }).catch((err) => {
+        initPromise = null;
+        isReady = false;
+        throw err;
+      });
     }
     return initPromise;
   }
 
   return {
     enabled: true,
+    get ready() { return isReady; },
     async init() {
       try {
         await init();
