@@ -11,6 +11,7 @@ function createRoomStore() {
       async has() { return false; },
       async set() {},
       async delete() {},
+      async deleteOlderThan() { return 0; },
     };
   }
 
@@ -97,6 +98,19 @@ function createRoomStore() {
         await pool.query("DELETE FROM game_rooms WHERE room_code = $1", [roomCode]);
       } catch (err) {
         console.error(`DB roomStore.delete error for ${roomCode}:`, err);
+      }
+    },
+    async deleteOlderThan(hours) {
+      try {
+        await init();
+        const result = await pool.query(
+          "DELETE FROM game_rooms WHERE updated_at < NOW() - make_interval(hours => $1)",
+          [hours]
+        );
+        return result.rowCount;
+      } catch (err) {
+        console.error("DB roomStore.deleteOlderThan error:", err);
+        return 0;
       }
     },
   };

@@ -320,6 +320,7 @@ async function endGame(room, roomCode, messageOverride = null, bidWonOverride = 
 
   room.phase = "gameover";
   room.gameOver = true;
+  room.finishedAt = Date.now();
   room.paused = false;
   room.pauseReason = null;
 
@@ -1109,6 +1110,33 @@ io.on("connection", socket => {
     scheduleDisconnectExpiry(roomCode, playerId);
   }));
 });
+
+const ROOM_SWEEP_INTERVAL_MS = 30 * 60_000;
+const GAMEOVER_EXPIRY_MS = 30 * 60_000;
+
+setInterval(async () => {
+  try {
+    await roomStore.deleteOlderThan(24);
+
+    const now = Date.now();
+    Object.entries(rooms).forEach(([roomCode, room]) => {
+      if (room.phase === "gameover" && room.finishedAt && (now - room.finishedAt > GAMEOVER_EXPIRY_MS)) {
+        if (room.disconnectTimers) {
+          Object.keys(room.disconnectTimers).forEach(pid => {
+            clearDisconnectTimer(room, pid);
+          });
+        }
+        if (room.viewingTimer) {
+          clearInterval(room.viewingTimer);
+          room.viewingTimer = null;
+        }
+        delete rooms[roomCode];
+      }
+    });
+  } catch (err) {
+    console.error("Error during room cleanup sweep:", err);
+  }
+}, ROOM_SWEEP_INTERVAL_MS);
 
 async function boot() {
   try {
