@@ -1,7 +1,7 @@
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom }) {
+export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom, onOpenRules }) {
   const isHost = myId && hostId === myId;
 
   function startGame() {
@@ -228,19 +228,36 @@ export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom }
               </div>
             )}
           </div>
-          <button
-            className="soft-button"
-            onClick={onLeaveRoom}
-            style={{
-              padding: "0.55rem 1.2rem",
-              background: "rgba(216,139,139,0.12)",
-              border: "1px solid rgba(216,139,139,0.2)",
-              color: "#af6666",
-              fontSize: "0.88rem"
-            }}
-          >
-            Leave Room
-          </button>
+          <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap", justifyContent: "center" }}>
+            <button
+              className="soft-button"
+              onClick={onOpenRules}
+              style={{
+                padding: "0.55rem 1.2rem",
+                background: "rgba(255,255,255,0.72)",
+                border: "1px solid rgba(117,96,84,0.18)",
+                color: "var(--text)",
+                fontSize: "0.88rem",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              📖 Game Rules
+            </button>
+            <button
+              className="soft-button"
+              onClick={onLeaveRoom}
+              style={{
+                padding: "0.55rem 1.2rem",
+                background: "rgba(216,139,139,0.12)",
+                border: "1px solid rgba(216,139,139,0.2)",
+                color: "#af6666",
+                fontSize: "0.88rem"
+              }}
+            >
+              Leave Room
+            </button>
+          </div>
         </div>
       </div>
     </div>

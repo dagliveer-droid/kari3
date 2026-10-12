@@ -8,7 +8,7 @@ import GameOverOverlay from "../components/overlays/GameOverOverlay";
 import { SUIT_NAMES, formatCard } from "../constants";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoom }) {
+export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoom, onOpenRules }) {
   const [selectedCard, setSelectedCard] = useState(null);
   const [selectedCardIdx, setSelectedCardIdx] = useState(null);
   const [trickCards, setTrickCards] = useState([]);
@@ -307,6 +307,22 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
                 🛑 End Game
               </button>
             )}
+            <button
+              className="soft-button"
+              onClick={onOpenRules}
+              style={{
+                padding: "0.45rem 0.8rem",
+                borderRadius: "999px",
+                background: "rgba(255, 255, 255, 0.72)",
+                border: "1px solid rgba(117, 96, 84, 0.16)",
+                color: "var(--text)",
+                fontSize: "0.78rem",
+                fontWeight: 700,
+                cursor: "pointer"
+              }}
+            >
+              📖 Rules
+            </button>
             <button
               className="soft-button"
               onClick={() => {

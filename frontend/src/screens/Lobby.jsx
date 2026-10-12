@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, onClearSession, initialRoomCode }) {
+export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, onClearSession, initialRoomCode, onOpenRules }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState(initialRoomCode || "");
   const [error, setError] = useState("");
@@ -98,24 +98,45 @@ export default function Lobby({ onNameChange, savedSession, onResumeSavedRoom, o
           }}
         >
           <div style={{ display: "grid", gap: "1.25rem" }}>
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.55rem",
-                alignSelf: "flex-start",
-                padding: "0.45rem 0.8rem",
-                borderRadius: "999px",
-                background: "rgba(255,255,255,0.55)",
-                border: "1px solid rgba(117,96,84,0.1)",
-                color: "var(--muted)",
-                fontSize: "0.76rem",
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-              }}
-            >
-              Table Ready
+            <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.55rem",
+                  padding: "0.45rem 0.8rem",
+                  borderRadius: "999px",
+                  background: "rgba(255,255,255,0.55)",
+                  border: "1px solid rgba(117,96,84,0.1)",
+                  color: "var(--muted)",
+                  fontSize: "0.76rem",
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                }}
+              >
+                Table Ready
+              </div>
+              <button
+                type="button"
+                className="soft-button"
+                onClick={onOpenRules}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  padding: "0.45rem 0.85rem",
+                  borderRadius: "999px",
+                  background: "rgba(255,255,255,0.72)",
+                  border: "1px solid rgba(117,96,84,0.14)",
+                  color: "var(--text)",
+                  fontSize: "0.76rem",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                📖 Game Rules
+              </button>
             </div>
 
             <div style={{ display: "grid", gap: "0.85rem" }}>

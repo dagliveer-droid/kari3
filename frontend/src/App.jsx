@@ -3,6 +3,7 @@ import { socket } from "./socket";
 import Lobby from "./screens/Lobby";
 import Waiting from "./screens/Waiting";
 import Game from "./screens/Game";
+import RulesOverlay from "./components/overlays/RulesOverlay";
 
 const SESSION_KEY = "kaari3-session";
 
@@ -55,6 +56,7 @@ export default function App() {
   const [gameState, setGameState] = useState({});
   const [myHand, setMyHand] = useState([]);
   const [connectionTrouble, setConnectionTrouble] = useState(false);
+  const [showRules, setShowRules] = useState(false);
 
   const myNameRef = useRef(myName);
   useEffect(() => {
@@ -270,6 +272,7 @@ export default function App() {
         onResumeSavedRoom={resumeSavedRoom}
         onClearSession={handleClearSession}
         initialRoomCode={initialRoomCode}
+        onOpenRules={() => setShowRules(true)}
       />
     );
   } else if (screen === "waiting") {
@@ -280,6 +283,7 @@ export default function App() {
         myId={myId}
         hostId={gameState.hostId}
         onLeaveRoom={leaveRoom}
+        onOpenRules={() => setShowRules(true)}
       />
     );
   } else {
@@ -291,6 +295,7 @@ export default function App() {
         state={gameState}
         myHand={myHand}
         onLeaveRoom={leaveRoom}
+        onOpenRules={() => setShowRules(true)}
       />
     );
   }
@@ -298,6 +303,7 @@ export default function App() {
   return (
     <>
       {screenComponent}
+      {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
       {connectionTrouble && (
         <div
           className="soft-panel fade-up"
