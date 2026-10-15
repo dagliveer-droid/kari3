@@ -15,7 +15,12 @@ function createRoomStore() {
     };
   }
 
-  const poolOptions = { connectionString };
+  const poolOptions = {
+    connectionString,
+    max: 5,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
   if (!connectionString.includes("sslmode=")) {
     poolOptions.ssl = process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false };
   }
@@ -29,9 +34,24 @@ function createRoomStore() {
   let initPromise;
   let isReady = false;
 
+  async function queryWithRetry(sql, params) {
+    try {
+      return await pool.query(sql, params);
+    } catch (err) {
+      console.warn("DB query failed, retrying in 500ms:", err.message || err);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        return await pool.query(sql, params);
+      } catch (retryErr) {
+        console.error("DB query retry failed, giving up:", retryErr);
+        throw retryErr;
+      }
+    }
+  }
+
   function init() {
     if (!initPromise) {
-      initPromise = pool.query(`
+      initPromise = queryWithRetry(`
         CREATE TABLE IF NOT EXISTS game_rooms (
           room_code TEXT PRIMARY KEY,
           state JSONB NOT NULL,
@@ -61,7 +81,7 @@ function createRoomStore() {
     },
     async get(roomCode) {
       await init();
-      const result = await pool.query(
+      const result = await queryWithRetry(
         "SELECT state FROM game_rooms WHERE room_code = $1",
         [roomCode],
       );
@@ -70,7 +90,7 @@ function createRoomStore() {
     async has(roomCode) {
       try {
         await init();
-        const result = await pool.query(
+        const result = await queryWithRetry(
           "SELECT 1 FROM game_rooms WHERE room_code = $1",
           [roomCode],
         );
@@ -83,7 +103,7 @@ function createRoomStore() {
     async set(roomCode, state) {
       try {
         await init();
-        await pool.query(
+        await queryWithRetry(
           `INSERT INTO game_rooms (room_code, state, updated_at)
            VALUES ($1, $2::jsonb, NOW())
            ON CONFLICT (room_code)
@@ -97,7 +117,7 @@ function createRoomStore() {
     async delete(roomCode) {
       try {
         await init();
-        await pool.query("DELETE FROM game_rooms WHERE room_code = $1", [roomCode]);
+        await queryWithRetry("DELETE FROM game_rooms WHERE room_code = $1", [roomCode]);
       } catch (err) {
         console.error(`DB roomStore.delete error for ${roomCode}:`, err);
       }
@@ -105,7 +125,7 @@ function createRoomStore() {
     async deleteOlderThan(hours) {
       try {
         await init();
-        const result = await pool.query(
+        const result = await queryWithRetry(
           "DELETE FROM game_rooms WHERE updated_at < NOW() - make_interval(hours => $1)",
           [hours]
         );

@@ -30,7 +30,7 @@ const roomStore = createRoomStore();
 
 app.use(express.static(path.join(__dirname, "../frontend/dist")));
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, persistentRooms: Boolean(roomStore.enabled && roomStore.ready) });
+  res.json({ ok: true, persistentRooms: roomStore.enabled, dbReady: roomStore.ready });
 });
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "../frontend/dist/index.html"));
