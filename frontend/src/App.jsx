@@ -57,6 +57,23 @@ export default function App() {
   const [myHand, setMyHand] = useState([]);
   const [connectionTrouble, setConnectionTrouble] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [bannerMessage, setBannerMessage] = useState(null);
+  const bannerTimerRef = useRef(null);
+
+  function showBanner(message) {
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    setBannerMessage(message);
+    bannerTimerRef.current = setTimeout(() => {
+      setBannerMessage(null);
+      bannerTimerRef.current = null;
+    }, 4000);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, []);
 
   const myNameRef = useRef(myName);
   useEffect(() => {
@@ -124,7 +141,7 @@ export default function App() {
     };
 
     const handleError = data => {
-      alert(data.message);
+      showBanner(data?.message || "An error occurred");
     };
 
     const handleReconnectFailed = () => {
@@ -155,7 +172,7 @@ export default function App() {
       if (typeof window !== "undefined") {
         window.history.replaceState(null, "", "/");
       }
-      alert("You have been kicked from the room.");
+      showBanner("You have been kicked from the room.");
     };
 
     const handleSessionReplaced = () => {
@@ -171,7 +188,7 @@ export default function App() {
       if (typeof window !== "undefined") {
         window.history.replaceState(null, "", "/");
       }
-      alert("You have been disconnected because the room was joined from another tab or window.");
+      showBanner("You have been disconnected because the room was joined from another tab or window.");
     };
 
     socket.on("connect", handleConnect);
@@ -284,6 +301,7 @@ export default function App() {
         hostId={gameState.hostId}
         onLeaveRoom={leaveRoom}
         onOpenRules={() => setShowRules(true)}
+        onShowBanner={showBanner}
       />
     );
   } else {
@@ -304,6 +322,34 @@ export default function App() {
     <>
       {screenComponent}
       {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
+      {bannerMessage && (
+        <div
+          className="soft-panel fade-up"
+          style={{
+            position: "fixed",
+            top: connectionTrouble ? "3.8rem" : "1rem",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "rgba(84,68,60,0.95)",
+            borderColor: "rgba(117,96,84,0.3)",
+            color: "#fff",
+            padding: "0.6rem 1.4rem",
+            borderRadius: "999px",
+            fontSize: "0.85rem",
+            fontWeight: 700,
+            boxShadow: "0 10px 30px rgba(84,68,60,0.25)",
+            pointerEvents: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            transition: "top 0.2s ease"
+          }}
+        >
+          <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent)" }} />
+          {bannerMessage}
+        </div>
+      )}
       {connectionTrouble && (
         <div
           className="soft-panel fade-up"

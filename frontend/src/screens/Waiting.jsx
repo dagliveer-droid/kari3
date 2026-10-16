@@ -1,7 +1,7 @@
 import { socket } from "../socket";
 import { initAudio, playUiSound } from "../audio";
 
-export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom, onOpenRules }) {
+export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom, onOpenRules, onShowBanner }) {
   const isHost = myId && hostId === myId;
 
   function startGame() {
@@ -76,9 +76,9 @@ export default function Waiting({ roomCode, players, myId, hostId, onLeaveRoom, 
               onClick={() => {
                 const link = `${window.location.origin}/${roomCode}`;
                 navigator.clipboard.writeText(link).then(() => {
-                  alert("Invite link copied to clipboard!");
+                  if (onShowBanner) onShowBanner("Invite link copied to clipboard!");
                 }).catch(() => {
-                  alert(`Invite link: ${link}`);
+                  if (onShowBanner) onShowBanner(`Invite link: ${link}`);
                 });
               }}
             >

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { socket } from "../socket";
 import Card from "../components/Card";
 import BidOverlay from "../components/overlays/BidOverlay";
@@ -7,6 +7,7 @@ import PartnerOverlay from "../components/overlays/PartnerOverlay";
 import GameOverOverlay from "../components/overlays/GameOverOverlay";
 import { SUIT_NAMES, formatCard } from "../constants";
 import { initAudio, playUiSound } from "../audio";
+import { preloadCards } from "../preloadCards";
 
 export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoom, onOpenRules }) {
   const [selectedCard, setSelectedCard] = useState(null);
@@ -14,6 +15,11 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
   const [trickCards, setTrickCards] = useState([]);
   const [countdown, setCountdown] = useState(null);
   const [log, setLog] = useState([]);
+  const trickTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    preloadCards();
+  }, []);
 
   function addLog(message) {
     setLog(prev => [...prev.slice(-5), message]);
@@ -35,6 +41,10 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
     };
 
     const handleCardPlayed = data => {
+      if (trickTimeoutRef.current) {
+        clearTimeout(trickTimeoutRef.current);
+        trickTimeoutRef.current = null;
+      }
       setTrickCards(data.trick);
       playUiSound("card");
     };
@@ -42,7 +52,13 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
     const handleTrickResolved = data => {
       addLog(`${data.winnerName} wins the trick (+${data.points})`);
       playUiSound("trick");
-      setTimeout(() => setTrickCards([]), 1400);
+      if (trickTimeoutRef.current) {
+        clearTimeout(trickTimeoutRef.current);
+      }
+      trickTimeoutRef.current = setTimeout(() => {
+        setTrickCards([]);
+        trickTimeoutRef.current = null;
+      }, 1400);
     };
 
     const handlePartnerRevealed = data => {
@@ -80,6 +96,10 @@ export default function Game({ roomCode, myId, myName, state, myHand, onLeaveRoo
     socket.on("game_over", handleGameOver);
 
     return () => {
+      if (trickTimeoutRef.current) {
+        clearTimeout(trickTimeoutRef.current);
+        trickTimeoutRef.current = null;
+      }
       socket.off("select_trump", handleSelectTrump);
       socket.off("select_partners", handleSelectPartners);
       socket.off("partners_set", handlePartnersSet);
