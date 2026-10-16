@@ -154,14 +154,31 @@ function hydrateRoom(snapshot) {
   return room;
 }
 
-async function persistRoom(roomCode) {
-  try {
-    const room = rooms[roomCode];
-    if (!room) return;
-    await roomStore.set(roomCode, serializeRoom(room));
-  } catch (err) {
-    console.error(`Failed to persist room ${roomCode}:`, err);
+const persistLocks = {};
+
+function persistRoom(roomCode) {
+  if (!roomCode || typeof roomCode !== "string") {
+    return Promise.resolve();
   }
+  const prevLock = persistLocks[roomCode] || Promise.resolve();
+  const nextLock = prevLock
+    .then(async () => {
+      try {
+        const room = rooms[roomCode];
+        if (!room) return;
+        await roomStore.set(roomCode, serializeRoom(room));
+      } catch (err) {
+        console.error(`Failed to persist room ${roomCode}:`, err);
+      }
+    })
+    .finally(() => {
+      if (persistLocks[roomCode] === nextLock) {
+        delete persistLocks[roomCode];
+      }
+    });
+
+  persistLocks[roomCode] = nextLock;
+  return nextLock;
 }
 
 async function deleteRoom(roomCode) {
@@ -387,8 +404,8 @@ function startViewingCountdown(room, roomCode) {
       if (liveRoom.viewingTimer) clearInterval(liveRoom.viewingTimer);
       liveRoom.viewingTimer = null;
       liveRoom.phase = "bidding";
-      await persistRoom(roomCode);
       broadcastRoomState(roomCode);
+      persistRoom(roomCode);
     }
   }, 1000);
 }
@@ -468,8 +485,8 @@ async function removeWaitingPlayer(roomCode, playerId) {
     return;
   }
 
-  await persistRoom(roomCode);
   broadcastRoomState(roomCode);
+  persistRoom(roomCode);
 }
 
 function validatePartnerCards(cards, room) {
@@ -504,8 +521,8 @@ function validatePartnerCards(cards, room) {
 
 async function startTrumpSelection(room, roomCode) {
   room.phase = "trump";
-  await persistRoom(roomCode);
   broadcastRoomState(roomCode);
+  persistRoom(roomCode);
 
   const bidderSocket = getSocketForPlayer(room, room.highestBidder);
   if (bidderSocket) {
@@ -531,8 +548,8 @@ async function advanceBidder(room, roomCode) {
   } while (room.passedPlayers.has(room.players[idx]));
 
   room.currentBidder = room.players[idx];
-  await persistRoom(roomCode);
   broadcastRoomState(roomCode);
+  persistRoom(roomCode);
 }
 
 
@@ -588,12 +605,11 @@ io.on("connection", socket => {
     const token = crypto.randomBytes(24).toString("hex");
 
     rooms[roomCode] = createRoomState(playerId, socket.id, finalName, token);
-    await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
-
     socket.join(roomCode);
     socket.emit("room_created", { roomCode, playerId, token });
     broadcastRoomState(roomCode);
+    persistRoom(roomCode);
   }));
 
   socket.on("join_room", safe(async ({ roomCode, name }) => {
@@ -632,11 +648,11 @@ io.on("connection", socket => {
     room.names[playerId] = finalName;
     room.sockets[playerId] = socket.id;
 
-    await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
     socket.join(roomCode);
     socket.emit("joined_room", { roomCode, playerId, token });
     broadcastRoomState(roomCode);
+    persistRoom(roomCode);
   }));
 
   socket.on("reconnect_room", safe(async ({ roomCode, playerId, token, name }) => {
@@ -672,12 +688,12 @@ io.on("connection", socket => {
     clearDisconnectTimer(room, playerId);
     updatePauseState(room);
 
-    await persistRoom(roomCode);
     attachSession(socket.id, roomCode, playerId);
     socket.join(roomCode);
     socket.emit("reconnected_room", { roomCode, playerId });
     emitPrivateHand(room, playerId);
     broadcastRoomState(roomCode);
+    persistRoom(roomCode);
   }));
 
   socket.on("start_game", safe(async ({ roomCode }) => {
@@ -732,9 +748,9 @@ io.on("connection", socket => {
       room.pauseReason = null;
       room.viewingCountdown = 15;
 
-      await persistRoom(roomCode);
       sendHands(room);
       broadcastRoomState(roomCode);
+      persistRoom(roomCode);
 
       startViewingCountdown(room, roomCode);
     });
@@ -765,12 +781,12 @@ io.on("connection", socket => {
 
       room.highestBid = bid;
       room.highestBidder = session.playerId;
-      await persistRoom(roomCode);
       io.to(roomCode).emit("bid_placed", {
         player: session.playerId,
         name: room.names[session.playerId],
         bid,
       });
+      persistRoom(roomCode);
       await advanceBidder(room, roomCode);
     });
   }));
@@ -790,11 +806,11 @@ io.on("connection", socket => {
       if (room.currentBidder !== session.playerId) return;
 
       room.passedPlayers.add(session.playerId);
-      await persistRoom(roomCode);
       io.to(roomCode).emit("bid_passed", {
         player: session.playerId,
         name: room.names[session.playerId],
       });
+      persistRoom(roomCode);
       await advanceBidder(room, roomCode);
     });
   }));
@@ -820,7 +836,6 @@ io.on("connection", socket => {
       room.phase = "partner";
       room.partnerCardTracker = {};
 
-      await persistRoom(roomCode);
       io.to(roomCode).emit("trump_chosen", {
         trump: room.trump,
         name: room.names[session.playerId],
@@ -831,6 +846,7 @@ io.on("connection", socket => {
         count: room.config.partners,
         decks: room.config.decks,
       });
+      persistRoom(roomCode);
     });
   }));
 
@@ -865,13 +881,13 @@ io.on("connection", socket => {
       room.leadSuit = null;
       room.teamScores = { bidTeam: 0, oppTeam: 0 };
 
-      await persistRoom(roomCode);
       io.to(roomCode).emit("partners_set", {
         partnerCards: cards,
         bidderName: room.names[room.highestBidder],
         totalPartners: room.config.partners,
       });
       broadcastRoomState(roomCode);
+      persistRoom(roomCode);
     });
   }));
 
@@ -972,8 +988,8 @@ io.on("connection", socket => {
         }
       }
 
-      await persistRoom(roomCode);
       broadcastRoomState(roomCode);
+      persistRoom(roomCode);
     });
   }));
 
@@ -993,8 +1009,8 @@ io.on("connection", socket => {
       if (!room.players.includes(targetPlayerId)) return sendError(socket, "Target player not found");
 
       room.hostId = targetPlayerId;
-      await persistRoom(roomCode);
       broadcastRoomState(roomCode);
+      persistRoom(roomCode);
     });
   }));
 
@@ -1071,9 +1087,9 @@ io.on("connection", socket => {
       }
       room.disconnected.add(playerId);
       updatePauseState(room);
-      await persistRoom(roomCode);
       io.to(roomCode).emit("player_left", { name: room.names[playerId], disconnected: true });
       broadcastRoomState(roomCode);
+      persistRoom(roomCode);
       scheduleDisconnectExpiry(roomCode, playerId);
     }
   }));
@@ -1105,9 +1121,9 @@ io.on("connection", socket => {
 
     room.disconnected.add(playerId);
     updatePauseState(room);
-    await persistRoom(roomCode);
     io.to(roomCode).emit("player_left", { name: room.names[playerId], disconnected: true });
     broadcastRoomState(roomCode);
+    persistRoom(roomCode);
     scheduleDisconnectExpiry(roomCode, playerId);
   }));
 });
