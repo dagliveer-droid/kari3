@@ -3,7 +3,7 @@ services:
     name: kari3
     runtime: node
     plan: free
-    region: ohio
+    region: singapore
     branch: main
     autoDeploy: true
     buildCommand: npm ci --prefix backend && npm ci --prefix frontend && npm run build --prefix frontend
@@ -13,14 +13,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: kari3-db
-          property: connectionString
-
-databases:
-  - name: kari3-db
-    databaseName: kari3
-    user: kari3
-    plan: free
-    postgresMajorVersion: "18"
-    ipAllowList: []
+        sync: false
