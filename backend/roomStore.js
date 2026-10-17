@@ -1,7 +1,7 @@
 const { Pool } = require("pg");
 
 function createRoomStore() {
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
   if (!connectionString) {
     return {
       enabled: false,

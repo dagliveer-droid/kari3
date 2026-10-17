@@ -2,7 +2,23 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
+const fs = require("fs");
 const crypto = require("crypto");
+
+[
+  path.join(__dirname, "../.env.local"),
+  path.join(__dirname, "../.env"),
+  path.join(__dirname, ".env.local"),
+  path.join(__dirname, ".env"),
+].forEach((envPath) => {
+  if (fs.existsSync(envPath) && typeof process.loadEnvFile === "function") {
+    try {
+      process.loadEnvFile(envPath);
+    } catch {
+      // ignore
+    }
+  }
+});
 
 const { dealCards, ALL_CARDS } = require("./game/deck");
 const { canPlayCard, resolveTrick } = require("./game/trick");
